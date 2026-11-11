@@ -4,8 +4,9 @@ description: |
   Run an implementation build the owner's way: this session leads, bounded workers write the code
   in a worktree (Claude subagents by default; Cursor, Antigravity agy (Opus, Gemini 4 Carbon,
   Flash) and Codex when allowed, named by the owner, or when Claude is out), and Codex, Cursor
-  and agy Gemini 4 Carbon review each milestone read-only at the same time. It runs from setup to
-  the final report without stopping to wait for the owner.
+  and agy Gemini 4 Carbon review each milestone read-only at the same time. It checks how much
+  allowance each runner has left and routes work around one that is nearly out. It runs from setup
+  to the final report without stopping to wait for the owner.
   Use when the owner says "build this", "implement this plan", "run the build", "start the build",
   "/build-with-agents <plan>", or pastes a plan or build prompt and asks for it to be implemented
   with subagents. Also resumes a stopped build: "/build-with-agents resume <build folder>".
@@ -88,6 +89,34 @@ has added a permission rule for `<SKILL>/bin/dispatch.sh`. Look for one in
 a Claude subagent; do not try an outside worker, and never work around a refusal. Reviews are
 read-only and need no rule.
 
+**Allowance.** `python -I <SKILL>/bin/usage.py` prints one line per runner: the share left in each
+window and when it resets. It takes about 10 seconds, only reads, and never stops a build.
+
+| Line | Governs |
+|---|---|
+| `claude` | the lead and every Claude subagent |
+| `codex` | the Codex reviewer and Codex as a worker |
+| `cursor` | the Cursor reviewer and every Cursor worker |
+| `agy-gemini` | agy Carbon (worker and reviewer) and agy Gemini Flash |
+| `agy-claude` | agy Opus |
+
+A line is `LOW` when any window has 10% or less left, `unknown` when it could not be read (a tool
+is missing or logged out), and `ok` otherwise; the output ends with `LOW:` and `UNKNOWN:` lists.
+It reads `quota-cli` (`cargo install quota-cli`) for Claude, Codex and Cursor, and Hermes
+(`hermes usage`) for agy. The settings and their overrides are described at the top of `usage.py`
+and go in `<SKILL>/local.env`, which git ignores.
+
+- **When to run it**: at setup after the preflight, before each milestone review, after any
+  `RATELIMITED` line, and once at the end. Copy its lines into the Runners table in `status.md`;
+  the first and last run also go under Measurements.
+- **Workers**: a `LOW` runner counts as rate-limited before it is tried. Go to the next runner for
+  the tier, and bring it back when a later run shows it `ok`. If `claude` is `LOW`, give every task
+  to the tier's outside runners when outside workers are allowed (otherwise carry on with Claude),
+  and tell the owner in one line what is left and when it resets.
+- **Reviewers** always run, as before. Write a `LOW` reviewer's line next to its review in
+  `status.md`, so a failure there explains itself.
+- **`unknown` changes nothing.** Only `LOW` moves work.
+
 ## 2. Setup (you, in order; record each in `status.md`)
 
 1. **Resume check.** If the build folder already has a `status.md`, go to **Resume**.
@@ -103,7 +132,7 @@ read-only and need no rule.
 5. **Tools in the worktree** (see **Repo notes**): which interpreter, `npm ci`, links.
 6. **Runners**: `bash <SKILL>/bin/preflight.sh --live`. One line per runner. A logged-out or
    missing runner does not stop the build: mark it down in `status.md`, tell the owner it needs
-   his login, and route around it.
+   his login, and route around it. Then run `usage.py` (see **Allowance**).
 7. **Status file** from `<SKILL>/templates/status.md`.
 8. **Baseline**: run the repo's checks once on the untouched worktree. If something already fails,
    record it in `status.md` as failing before the build, tell the owner in one line, and carry on;
@@ -141,8 +170,10 @@ read-only and need no rule.
   It prints one line: `PASS`, `VERIFYFAIL`, `NOVERDICT`, `FAIL`, `EMPTY`, `RATELIMITED` (exit
   86) or `TIMEOUT` (exit 87). Read `<build>/reports/<task>.md`, not the log; on a failure read only
   `tail -c 2000` of the log, never `tail -n`.
-- **Rate limited**: reroute the same task to the next runner for its tier at once; do not wait.
-  Mark the runner down in `status.md` with the time and probe it again after 30 minutes.
+- **Rate limited, or `LOW` in the latest `usage.py` run**: reroute the same task to the next runner
+  for its tier at once; do not wait. Mark the runner down in `status.md` with the time, run
+  `usage.py` to see when its window resets, and look at it again then (after 30 minutes if that is
+  `unknown`).
 - **One code-changing worker at a time** in the build worktree: workers share its files and its
   git index. Run workers in parallel only for tasks that touch disjoint files, at most three at
   once, each in its own worktree that you make from the build branch head
@@ -170,7 +201,8 @@ read-only and need no rule.
    `m<N>-brief.md` from `<SKILL>/templates/review-brief.md` with every angle bracket filled in.
    Its reading order names the files that carry money, records or state first: a reviewer that
    reads everything runs out of time before it writes (a Carbon review did, 2026-11-10).
-4. **Run**: `bash <SKILL>/bin/review.sh m<N> <review checkout> <build>` in the background; it runs
+4. **Run** `usage.py` first and write each reviewer's line in `status.md` (a `LOW` reviewer still
+   runs). Then `bash <SKILL>/bin/review.sh m<N> <review checkout> <build>` in the background; it runs
    Codex, Cursor and agy Carbon at the same time (usually 10 to 25 minutes; Carbon high is slow,
    so it is stopped at 90 minutes, the others at 45) and prints one line each. Name
    reviewers after the build folder to run only some (for example `... <build> carbon` when the
@@ -238,9 +270,11 @@ First finish the worktrees as the owner's rule in `~/.claude/CLAUDE.md` ("Worktr
 4. Test results you ran yourself at the end (commands, counts, exit codes).
 5. Each milestone review: the pin, each reviewer's verdict, each big problem and its repair commit,
    and what any missing reviewer did not read.
-6. What was not done and why; the follow-up list, also written into the repo's `TODOS.md` (or
+6. Allowance left on each runner at the start and at the end (the first and last `usage.py` runs),
+   so he sees what the build cost, and any runner that was `LOW` and what moved off it.
+7. What was not done and why; the follow-up list, also written into the repo's `TODOS.md` (or
    its deferred-work file) as the build's last commit.
-7. READY or NOT READY, and the one next step he can take (for example "say merge").
+8. READY or NOT READY, and the one next step he can take (for example "say merge").
 
 ## Resume
 
@@ -249,7 +283,8 @@ Read `status.md`. Trust it over memory. For a row left `running`: check `git -C 
 not, delete `<build>/logs/<task>.lock` if present and dispatch it again. Never redo a finished
 item.
 
-If Claude Code's own usage ran out, this session stops with its workers: the build waits on disk.
+If Claude Code's own usage ran out, this session stops with its workers: the build waits on disk
+(`usage.py` shows when it resets).
 Either resume here when it resets, or the owner hands the lead to Codex, which reads this same
 file, from a terminal in the worktree:
 
@@ -265,8 +300,9 @@ starts one with this skill. A lead without Claude Code's Agent tool sends every 
 `claude claude-opus-5-5` (on `RATELIMITED`: `agy claude-opus-5-5-high`, then
 `cursor claude-opus-5-thinking-high`), medium to `agy gemini-4-carbon-medium` (then
 `codex gpt-6.1-sol`, then `cursor gpt-5.6-sol-xhigh`), easy to `claude claude-sonnet-5-5` (on
-`RATELIMITED`: `cursor cursor-grok-4.6-high-fast`, then `agy gemini-3.8-flash-high`). Reviews
-still run through `review.sh`. Codex is a one-shot process: a question printed to the screen
+`RATELIMITED`: `cursor cursor-grok-4.6-high-fast`, then `agy gemini-3.8-flash-high`). A `LOW`
+line from `usage.py` counts as `RATELIMITED` in every chain here. Reviews still run through
+`review.sh`. Codex is a one-shot process: a question printed to the screen
 reaches nobody, so it follows rule 4 and section 6 the same way (a lead's choice in `status.md`)
 and stops only at the final report.
 

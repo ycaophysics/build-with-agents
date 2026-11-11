@@ -1,2 +1,6 @@
-# Machine-specific notes about private repos and paths; never committed.
+# Machine-specific notes and settings (private repos, local paths); never committed.
 repo-notes.local.md
+local.env
+
+# Compiled Python caches store the file path.
+__pycache__/

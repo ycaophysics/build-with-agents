@@ -11,13 +11,13 @@ Started: <YYYY-MM-DD HH:MM> by <LEAD AND MODEL>.
 
 ## Runners
 
-| Runner | Model | State | Since |
-|---|---|---|---|
-| Claude subagent | claude-opus-5-5, high | up | |
-| Claude subagent, easy | claude-sonnet-5-5, high | up | |
-| codex (review) | gpt-6.1-sol, xhigh | <up / logged out / down> | |
-| cursor (review) | grok-4.7-xhigh | | |
-| agy Carbon (review) | gemini-4-carbon-high | | |
+| Runner | Model | State | Since | Allowance left (usage.py line and time checked) |
+|---|---|---|---|---|
+| Claude subagent | claude-opus-5-5, high | up | | <claude line> |
+| Claude subagent, easy | claude-sonnet-5-5, high | up | | (same line) |
+| codex (review) | gpt-6.1-sol, xhigh | <up / logged out / down> | | <codex line> |
+| cursor (review) | grok-4.7-xhigh | | | <cursor line> |
+| agy Carbon (review) | gemini-4-carbon-high | | | <agy-gemini line> |
 
 ## Owner answers during the build
 
