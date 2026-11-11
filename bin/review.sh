@@ -38,6 +38,7 @@ if [ "$#" -lt 3 ]; then
 fi
 M="$1"; CO="$2"; BUILD="$3"; shift 3
 REVIEWERS="${*:-codex cursor carbon}"
+REVIEWERS="$(printf '%s\n' $REVIEWERS | awk '!seen[$0]++' | tr '\n' ' ')"   # a name given twice runs once
 BRIEF="$BUILD/reviews/$M-brief.md"
 [ -f "$BRIEF" ] || { echo "$M NOBRIEF $BRIEF does not exist" >&2; exit 2; }
 git -C "$CO" rev-parse --git-dir >/dev/null 2>&1 || { echo "$M NOCHECKOUT $CO is not a git checkout" >&2; exit 2; }
@@ -107,7 +108,8 @@ for r in $REVIEWERS; do
   fi
   if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
     echo "$M $r:$(model_of "$r") TIMEOUT $(timeout_of "$r")s $dur log=$log$note"
-  elif [ "$bytes" -gt 200 ] && [ "$rc" -eq 0 ]; then
+  elif [ "$rc" -eq 0 ] && { [ "$bytes" -gt 200 ] || grep -qiE '^[[:space:]*#]*verdict' "$out" 2>/dev/null; }; then
+    # A clean review ("VERDICT: READY / BIG: none / SMALL: none") is about 50 bytes: it counts.
     echo "$M $r:$(model_of "$r") DONE $dur ${bytes} bytes file=$out$note"; any=1
   elif is_limited "$log" || is_limited "$out"; then
     echo "$M $r:$(model_of "$r") RATELIMITED $dur log=$log$note"

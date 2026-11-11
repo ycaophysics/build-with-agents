@@ -69,12 +69,17 @@ VERDICT_W="$(win "$VERDICT")"; REPORT_W="$(win "$REPORT")"
 
 # Short on purpose: cursor-agent runs through cmd.exe, which cuts a command line at 8,191
 # characters, and an inlined brief once lost its "what not to do" list that way. The worker
-# reads the brief from disk.
+# reads the brief from disk. cmd.exe also cuts an argument at its first line break (tested
+# 2026-11-11), so cursor-agent is given a one-line pointer to this text, not the text itself.
 PROMPT="You are an implementation worker doing exactly one task: ${TASK}.
 Read ${BRIEF_W} and follow it exactly. Work only in ${WT_W}.
 When you finish, write two files; they are the only handoff the lead reads, and a chat answer is not one:
 1. ${REPORT_W}: your final report, under 60 lines, with exactly these sections: STATUS (DONE | PARTIAL | BLOCKED), COMMITS (hash + subject), FILES CHANGED, VERIFICATION (each command, exit code, pass/fail counts), OPEN ITEMS, ARTIFACT PATHS.
 2. ${VERDICT_W}: the single word PASS or FAIL. PASS only if the verification commands in your brief actually passed. A PASS with failing tests is worse than FAIL, because it is believed."
+
+PROMPT_FILE="$BUILD/logs/$TASK.prompt.md"
+printf '%s\n' "$PROMPT" > "$PROMPT_FILE"
+PROMPT_ONE_LINE="Read $(win "$PROMPT_FILE") and follow it exactly."
 
 run_with_deadline() {
   if command -v timeout >/dev/null 2>&1; then
@@ -94,7 +99,7 @@ case "$RUNNER" in
       --add-dir "$BUILD_W" --print-timeout 0 --output-format text) >"$LOG" 2>&1; rc=$? ;;
   cursor)
     run_with_deadline "$CURSOR" -p --model "$MODEL" --force --trust --workspace "$WT_W" \
-      --add-dir "$BUILD_W" --output-format text "$PROMPT" >"$LOG" 2>&1; rc=$? ;;
+      --add-dir "$BUILD_W" --output-format text "$PROMPT_ONE_LINE" >"$LOG" 2>&1; rc=$? ;;
   codex)
     # Codex's Windows sandbox ("unelevated" in ~/.codex/config.toml) cannot create pipes or temp
     # files, which looks like a broken repo. A worker that edits and runs tests needs full access.

@@ -5,7 +5,7 @@ Started: <YYYY-MM-DD HH:MM> by <LEAD AND MODEL>.
 
 - Main checkout: `<MAIN_CHECKOUT>` (the owner's; never edited by the build)
 - Worktree: `<WORKTREE>`, branch `<BRANCH>`
-- Base commit (master): `<FULL SHA>`
+- Base branch `<BASE>`, its commit: `<FULL SHA>`
 
 **READY / NOT READY: NOT READY** — <one line, rewritten in place as the build moves>
 
@@ -18,6 +18,7 @@ Started: <YYYY-MM-DD HH:MM> by <LEAD AND MODEL>.
 | codex (review) | gpt-6.1-sol, xhigh | <up / logged out / down> | | <codex line> |
 | cursor (review) | grok-4.7-xhigh | | | <cursor line> |
 | agy Carbon (review) | gemini-4-carbon-high | | | <agy-gemini line> |
+| agy Opus (worker, when Claude is out) | claude-opus-5-5-high | | | <agy-claude line> |
 
 ## Owner answers during the build
 

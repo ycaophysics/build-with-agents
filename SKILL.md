@@ -90,7 +90,8 @@ a Claude subagent; do not try an outside worker, and never work around a refusal
 read-only and need no rule.
 
 **Allowance.** `python -I <SKILL>/bin/usage.py` prints one line per runner: the share left in each
-window and when it resets. It takes about 10 seconds, only reads, and never stops a build.
+window and when it resets. It takes about 10 seconds (80 at the very most: every outside call has a
+deadline), only reads, writes nothing, and never stops a build.
 
 | Line | Governs |
 |---|---|
@@ -119,21 +120,24 @@ and go in `<SKILL>/local.env`, which git ignores.
 
 ## 2. Setup (you, in order; record each in `status.md`)
 
+`<base>` below is the branch the plan builds on; when the plan names none, the repo's default
+branch (`main` or `master`, whichever exists).
+
 1. **Resume check.** If the build folder already has a `status.md`, go to **Resume**.
-2. **Nothing else is building here.** In the main checkout: `git status`, `git log master -5`,
+2. **Nothing else is building here.** In the main checkout: `git status`, `git log <base> -5`,
    `git worktree list`, and the running python, node, codex, cursor-agent, agy and claude
    processes with their command lines. If another process is editing this repo now, write it in
    `status.md`, tell the owner in one line, and carry on: the build works only in its own worktree.
    The owner's own running app and scheduled jobs are expected (see **Repo notes**).
 3. **Worktree and branch.** Never build in the main checkout. From the main checkout:
-   `git worktree add ../<repo-short>-wt-<slug> -b <branch> master`. Record the base commit.
+   `git worktree add ../<repo-short>-wt-<slug> -b <branch> <base>`. Record the base commit.
 4. **Build folder**: `~/.claude/plans/<slug>-build/` with `logs/`, `reviews/`,
    `briefs/`, `reports/`. Copy the plan in as `plan.md` so reviewers read the same text you do.
 5. **Tools in the worktree** (see **Repo notes**): which interpreter, `npm ci`, links.
 6. **Runners**: `bash <SKILL>/bin/preflight.sh --live`. One line per runner. A logged-out or
    missing runner does not stop the build: mark it down in `status.md`, tell the owner it needs
    his login, and route around it. Then run `usage.py` (see **Allowance**).
-7. **Status file** from `<SKILL>/templates/status.md`.
+7. **Status file** from `<SKILL>/templates/status.md`; copy into it what you noted in steps 2 to 6.
 8. **Baseline**: run the repo's checks once on the untouched worktree. If something already fails,
    record it in `status.md` as failing before the build, tell the owner in one line, and carry on;
    it is not yours to fix and does not count against the build.
@@ -182,7 +186,7 @@ and go in `<SKILL>/local.env`, which git ignores.
   own worktree option starts from the main checkout's HEAD, not the build branch.)
 - **Check every claim yourself** after each worker: `git -C <worktree> log` and `show --stat` for
   its commits, rerun the tests it says passed, and confirm the main checkout is still clean and
-  `master` has not moved. A worker exiting cleanly proves nothing.
+  `<base>` has not moved. A worker exiting cleanly proves nothing.
 - **PARTIAL or BLOCKED**: one follow-up dispatch that names the gap. Still blocked: move the task
   up a tier once. Still blocked after that: handle it as section 6 says. Never a third attempt at
   the same tier.
@@ -251,7 +255,7 @@ Nothing here pauses the build (rule 4). Each goes into `status.md` and the final
 
 - Commit each logical step as it goes green, not a whole milestone at once. Every commit message
   ends with a `Co-Authored-By:` line naming the model that actually did that work.
-- Never push, merge, rebase onto master, open a PR or deploy unless the owner says so.
+- Never push, merge, rebase onto `<base>`, open a PR or deploy unless the owner says so.
 - Python test suites always run in parallel with `-n auto`; never serially.
 - Owner-facing words are plain English: what a person sees and can do. No "gate", no invented
   shorthand, no internal codes on screen.
@@ -261,7 +265,16 @@ Nothing here pauses the build (rule 4). Each goes into `status.md` and the final
 
 ## 8. The final report (to the owner, plain English, short)
 
-First finish the worktrees as the owner's rule in `~/.claude/CLAUDE.md` ("Worktrees") says.
+First, in this order (the owner's rule for every worktree):
+- Write the follow-up list into the repo's `TODOS.md` (or its deferred-work file) and commit it as
+  the build's last commit on the build branch.
+- Look in the build worktree for uncommitted files, then remove the worktree, and confirm with
+  `git worktree list` that it is gone and that its folder is gone from disk (`git worktree remove`
+  can leave `node_modules` behind).
+- Switch the main checkout to the build branch, so he can run the work from the folder he already
+  uses. If the main checkout has uncommitted work, leave it where it is and say so.
+
+Then the report:
 
 1. What now works, as he would see it, with screenshots for screen changes.
 2. Every lead's choice, with the other options, for him to confirm or reverse.
@@ -272,16 +285,17 @@ First finish the worktrees as the owner's rule in `~/.claude/CLAUDE.md` ("Worktr
    and what any missing reviewer did not read.
 6. Allowance left on each runner at the start and at the end (the first and last `usage.py` runs),
    so he sees what the build cost, and any runner that was `LOW` and what moved off it.
-7. What was not done and why; the follow-up list, also written into the repo's `TODOS.md` (or
-   its deferred-work file) as the build's last commit.
+7. What was not done and why, and the follow-up list (already committed in `TODOS.md`).
 8. READY or NOT READY, and the one next step he can take (for example "say merge").
 
 ## Resume
 
 Read `status.md`. Trust it over memory. For a row left `running`: check `git -C <worktree> log`,
-`git status` and `<build>/reports/<task>.md`. If the work landed, verify it and mark it done; if
-not, delete `<build>/logs/<task>.lock` if present and dispatch it again. Never redo a finished
-item.
+`git status` and `<build>/reports/<task>.md`. If the work landed, verify it and mark it done. If
+not, first check that no worker is still running for the task (a python, node, codex,
+cursor-agent, agy or claude process whose command line names the task or the worktree); if one
+is, wait for it and do not dispatch. Only then delete `<build>/logs/<task>.lock` if present and
+dispatch the task again. Never redo a finished item.
 
 If Claude Code's own usage ran out, this session stops with its workers: the build waits on disk
 (`usage.py` shows when it resets).

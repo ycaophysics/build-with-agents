@@ -39,6 +39,12 @@ for tool in codex cursor agy; do
     agy)    dir="$HOME/.gemini/config/skills" ;;
   esac
   dest="$dir/$NAME"
+  # If $dir is itself a link to ~/.claude/skills, then $dest IS the source, and removing it would
+  # delete the real skill (tested 2026-11-11). `-ef` is true when both names reach the same folder.
+  # (A correct link at $dest also reaches the source, so only the parent folders are compared.)
+  if [ "$dir" -ef "$(dirname "$SRC")" ]; then
+    echo "$tool: skipped, $dir is the same folder as $(dirname "$SRC")"; continue
+  fi
   if [ "$MODE" = "--remove" ]; then
     remove_entry "$dest"; echo "$tool: removed $dest"; continue
   fi
