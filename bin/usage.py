@@ -173,16 +173,17 @@ def run(cmd, timeout, env=None):
 
 
 # ----------------------------------------------------------------------------- quota-cli
+AGY_WINDOWS = {  # quota-cli's antigravity labels (0.4.0) -> (runner, window)
+    "5h": ("agy-gemini", "5h"), "Wk": ("agy-gemini", "Wk"),
+    "Claude/GPT 5h": ("agy-claude", "5h"), "Claude/GPT Wk": ("agy-claude", "Wk"),
+}
+
+
 def agy_window(label):
     """quota-cli's label for an antigravity window -> (runner, window label), or None to leave it out.
-    The Gemini pool's labels are plain ("5h", "Wk"); the other pool's start with "Claude/GPT ".
-    Argon's own allowance ("Argon 5h", "Argon Wk") is left out: the build no longer uses Argon."""
-    label = str(label or "").strip()
-    if label.startswith("Claude/GPT "):
-        return "agy-claude", label[len("Claude/GPT "):]
-    if label.startswith("Argon"):
-        return None
-    return "agy-gemini", label
+    Any other label is left out, Argon's allowance ("Argon 5h", "Argon Wk") included: the build no
+    longer uses Argon, and a pool this does not know must not make an agy line LOW."""
+    return AGY_WINDOWS.get(str(label or "").strip())
 
 
 def parse_quota(stdout, stderr) -> dict:
@@ -252,7 +253,12 @@ def collect_quota(cfg: dict) -> dict:
         try:
             result = via_watch_script(Path(watch))
             if any(info["windows"] for info in result.values()):
-                return result
+                if all(has_numbers(result.get(r)) for r in AGY_RUNNERS):
+                    return result
+                # A helper written before quota-cli read agy reports no agy lines: take those
+                # from quota-cli itself, still inside the 80-second limit.
+                direct = via_quota_cli(cfg)
+                return {**result, **{r: direct[r] for r in AGY_RUNNERS if not has_numbers(result.get(r))}}
         except Exception:  # it hung, crashed or answered with nonsense: ask quota-cli itself
             pass
     return via_quota_cli(cfg)
@@ -342,7 +348,7 @@ def describe(info: dict, low_pct: float):
         low = low or is_low
         when = fmt_reset(w["reset"]) if w["reset"] else ""
         parts.append(f"{w['name']} {fmt_pct(w['left'])} left{' LOW' if is_low else ''}{f' (resets {when})' if when else ''}")
-    return ("LOW" if low else "ok"), "; ".join(parts)
+    return ("LOW" if low else "ok"), scrub("; ".join(parts))
 
 
 def safe(fn, cfg: dict, runners) -> dict:
