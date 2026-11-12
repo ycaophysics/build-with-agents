@@ -76,11 +76,12 @@ The model IDs also live in `<SKILL>/bin/roster.sh`; change both in the same edit
 model outside this table, never fall back to `auto`, never swap a reviewer's model because it is
 down. If a task looks too big for its tier, move it up a tier.
 
-Where things are: `cursor-agent` is `%LOCALAPPDATA%\cursor-agent\cursor-agent.cmd` and `agy` is
-`%LOCALAPPDATA%\agy\bin\agy.exe` (override with the `CURSOR_AGENT` and `AGY` environment
-variables); neither is on Git Bash's PATH. Only
-the owner logs a runner in (`codex login`, `cursor-agent login`, opening `agy` once); never handle
-his credentials.
+Where things are: on Windows, `cursor-agent` is `%LOCALAPPDATA%\cursor-agent\cursor-agent.cmd`
+and `agy` is `%LOCALAPPDATA%\agy\bin\agy.exe`, and neither is on Git Bash's PATH. On macOS and
+Linux both are on PATH, or in `~/.local/bin`. The `CURSOR_AGENT` and `AGY` environment variables
+override either. The scripts run in Git Bash on Windows and in any bash 3.2 or later elsewhere,
+macOS's own included. Only the owner logs a runner in (`codex login`, `cursor-agent login`, opening
+`agy` once); never handle his credentials.
 
 **Outside workers need the owner's permission.** cursor-agent, agy, codex and `claude -p` editing
 files unattended are refused by Claude Code's auto mode ("Create Unsafe Agents") unless the owner
@@ -89,9 +90,9 @@ has added a permission rule for `<SKILL>/bin/dispatch.sh`. Look for one in
 a Claude subagent; do not try an outside worker, and never work around a refusal. Reviews are
 read-only and need no rule.
 
-**Allowance.** `python -I <SKILL>/bin/usage.py` prints one line per runner: the share left in each
-window and when it resets. It takes about 10 seconds (80 at the very most: every outside call has a
-deadline), only reads, writes nothing, and never stops a build.
+**Allowance.** `python3 -I <SKILL>/bin/usage.py` (`python` on Windows) prints one line per runner:
+the share left in each window and when it resets. It takes about 10 seconds (80 at the very most:
+every outside call has a deadline), only reads, writes nothing, and never stops a build.
 
 | Line | Governs |
 |---|---|
@@ -126,8 +127,9 @@ branch (`main` or `master`, whichever exists).
 1. **Resume check.** If the build folder already has a `status.md`, go to **Resume**.
 2. **Nothing else is building here.** In the main checkout: `git status`, `git log <base> -5`,
    `git worktree list`, and the running python, node, codex, cursor-agent, agy and claude
-   processes with their command lines. If another process is editing this repo now, write it in
-   `status.md`, tell the owner in one line, and carry on: the build works only in its own worktree.
+   processes with their command lines (`ps -Ao pid,command` on macOS and Linux). If another
+   process is editing this repo now, write it in `status.md`, tell the owner in one line, and carry
+   on: the build works only in its own worktree.
    The owner's own running app and scheduled jobs are expected (see **Repo notes**).
 3. **Worktree and branch.** Never build in the main checkout. From the main checkout:
    `git worktree add ../<repo-short>-wt-<slug> -b <branch> <base>`. Record the base commit.
