@@ -31,7 +31,7 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=roster.sh
-. "$HERE/roster.sh"   # CURSOR and AGY: where the two runners live
+. "$HERE/roster.sh"   # CURSOR and AGY (where those runners live), CODEX_WORKER_EFFORT
 # shellcheck source=deadline.sh
 . "$HERE/deadline.sh"  # run_deadline: stops the whole process tree at the deadline
 TIMEOUT="${DISPATCH_TIMEOUT:-3600}"
@@ -105,9 +105,10 @@ case "$RUNNER" in
     # Codex's Windows sandbox ("unelevated" in ~/.codex/config.toml) cannot create pipes or temp
     # files, which looks like a broken repo. On macOS and Linux its workspace-write sandbox would
     # refuse the report and verdict, which go to the build folder outside the worktree. A worker
-    # that edits, runs tests and writes its report needs full access.
+    # that edits, runs tests and writes its report needs full access. The effort is set here, not
+    # left to the owner's ~/.codex/config.toml (Codex's own default for gpt-6.1-sol is low).
     printf '%s' "$PROMPT" | run_with_deadline codex exec - -m "$MODEL" -s danger-full-access \
-      -C "$WT_W" -o "$(runner_path "$BUILD/logs/$TASK-$STAMP.last.md")" >"$LOG" 2>&1; rc=$? ;;
+      -c "model_reasoning_effort=\"$CODEX_WORKER_EFFORT\"" -C "$WT_W" -o "$(runner_path "$BUILD/logs/$TASK-$STAMP.last.md")" >"$LOG" 2>&1; rc=$? ;;
 esac
 elapsed=$(( $(date +%s) - start ))
 dur=$(printf '%02d:%02d:%02d' $((elapsed/3600)) $((elapsed%3600/60)) $((elapsed%60)))
