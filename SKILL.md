@@ -104,9 +104,11 @@ every outside call has a deadline), only reads, writes nothing, and never stops 
 
 A line is `LOW` when any window has 10% or less left, `unknown` when it could not be read (a tool
 is missing or logged out), and `ok` otherwise; the output ends with `LOW:` and `UNKNOWN:` lists.
-It reads `quota-cli` (`cargo install quota-cli`) for Claude, Codex and Cursor, and Hermes
-(`hermes usage`) for agy. The settings and their overrides are described at the top of `usage.py`
-and go in `<SKILL>/local.env`, which git ignores.
+It reads `quota-cli` for every runner, agy included (`install.sh` installs it). Hermes (`hermes
+usage`) is optional: when it is installed, it fills in agy's lines if quota-cli cannot read them.
+On macOS the `cursor` line is `unknown`, because cursor-agent keeps its login in the Keychain
+there. The settings and their overrides are described at the top of `usage.py` and go in
+`<SKILL>/local.env`, which git ignores.
 
 - **When to run it**: at setup after the preflight, before each milestone review, after any
   `RATELIMITED` line, and once at the end. Copy its lines into the Runners table in `status.md`;
@@ -335,7 +337,9 @@ and stops only at the final report.
 
 Codex, Cursor and agy load this skill too. `bash ~/.claude/skills/build-with-agents/install.sh`
 puts it in each one's skills folder (links for Codex and Cursor; a copy for agy, refreshed by
-running it again after an edit). Edit only `~/.claude/skills/build-with-agents`.
+running it again after an edit), and installs quota-cli if it is missing. Edit only
+`~/.claude/skills/build-with-agents`. If `usage.py` says quota-cli is not found, tell the owner to
+run the installer; do not install software yourself during a build.
 
 ## Repo notes
 

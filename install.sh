@@ -10,12 +10,19 @@
 # The link is a directory junction on Windows, where this runs from Git Bash, and a symbolic link
 # on macOS and Linux.
 #
-#   bash ~/.claude/skills/build-with-agents/install.sh            install, or refresh agy's copy
-#   bash ~/.claude/skills/build-with-agents/install.sh --remove   take it out of those three tools
+# It also installs quota-cli, which bin/usage.py reads for every runner's allowance, unless it is
+# already there. Linux and Windows get the prebuilt binary, checked against the hash below, in
+# ~/.local/bin. macOS has no prebuilt binary, so there it is built with cargo, which takes a few
+# minutes and needs Rust (https://rustup.rs) and a C compiler.
+#
+#   bash ~/.claude/skills/build-with-agents/install.sh                 install, or refresh agy's copy
+#   bash ~/.claude/skills/build-with-agents/install.sh --no-quota-cli  the same, without quota-cli
+#   bash ~/.claude/skills/build-with-agents/install.sh --remove        take it out of those three
+#                                                                      tools; quota-cli stays
 #
 # A tool whose own folder (~/.codex, ~/.cursor, ~/.gemini/config) is missing is skipped; when only
-# its skills folder is missing, that folder is made. The exit code is 1 when any tool failed, even
-# if a later one worked.
+# its skills folder is missing, that folder is made. The exit code is 1 when any tool, or
+# quota-cli, failed, even if a later one worked.
 #
 # Claude Code needs nothing: it reads ~/.claude/skills directly. The source folder is never
 # deleted or changed by this script.
@@ -88,9 +95,92 @@ linked_here() {  # linked_here <path>: a link that reaches this skill's source
   [ "$(probe "$1")" = "$LINK" ] && [ "$1" -ef "$SRC" ]
 }
 
-MODE="${1:-install}"
+MODE=install; QUOTA=yes
+for arg in "$@"; do
+  case "$arg" in
+    --remove) MODE=--remove ;;
+    --no-quota-cli) QUOTA="" ;;
+    *) echo "unknown option $arg (want --remove or --no-quota-cli)" >&2; exit 2 ;;
+  esac
+done
 FAILED=""
 fail() { echo "$1: FAILED, $2" >&2; FAILED="$FAILED $1"; }
+
+# quota-cli is pinned, so its JSON has the shape usage.py reads. To move to a newer version, check
+# its JSON, then change the version and both hashes (from the release's SHA256SUMS.txt) together.
+QUOTA_CLI_VERSION=0.4.0
+QUOTA_CLI_RELEASE="https://github.com/pinkpixel-dev/quota/releases/download/quota-cli-v$QUOTA_CLI_VERSION"
+
+find_quota_cli() {  # the places usage.py looks, in its order: PATH, ~/.cargo/bin, ~/.local/bin
+  local p
+  for p in "$(command -v quota-cli 2>/dev/null)" "$HOME/.cargo/bin/quota-cli" "$HOME/.local/bin/quota-cli"; do
+    if [ -n "$p" ] && [ -x "$p" ]; then echo "$p"; return 0; fi
+  done
+  return 1
+}
+
+prebuilt_quota_cli() {  # prints "<archive> <sha256>" for this machine; 1 when there is no build
+  case "$(uname -s)/$(uname -m)" in
+    Linux/x86_64)
+      echo "quota-cli-x86_64-unknown-linux-gnu.tar.gz dd612ba42a3e79b2a3e1a826d23f2e4a543325ad3b65bc8d6c225f8f2d760b68" ;;
+    MINGW*/x86_64|MSYS*/x86_64|CYGWIN*/x86_64)
+      echo "quota-cli-x86_64-pc-windows-msvc.zip 36d58e60bece544a536362c5eeabe2b20ed929ab0ce66bc97046a56a618adfed" ;;
+    *) return 1 ;;
+  esac
+}
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | awk '{print $1}'
+}
+
+# download_quota_cli <archive> <sha256>: put the release's binary in ~/.local/bin, but only when the
+# archive matches its hash and the binary runs on this machine (the Linux build needs glibc).
+download_quota_cli() {
+  local archive="$1" want="$2" tmp bin dest ok=""
+  tmp="$(mktemp -d)" || return 1
+  if curl -fsSL -o "$tmp/$archive" "$QUOTA_CLI_RELEASE/$archive"; then
+    if [ "$(sha256_of "$tmp/$archive")" != "$want" ]; then
+      echo "quota-cli: $archive does not match its pinned hash, so it was not installed" >&2
+    else
+      mkdir -p "$tmp/x"
+      case "$archive" in
+        *.zip) unzip -q "$tmp/$archive" -d "$tmp/x" ;;
+        *) tar -xzf "$tmp/$archive" -C "$tmp/x" ;;
+      esac
+      bin="$(find "$tmp/x" -type f \( -name quota-cli -o -name quota-cli.exe \) | head -1)"
+      if [ -n "$bin" ] && "$bin" --help >/dev/null 2>&1; then
+        dest="$HOME/.local/bin/$(basename "$bin")"
+        mkdir -p "$HOME/.local/bin" && cp "$bin" "$dest" && chmod +x "$dest" && ok=yes
+      fi
+    fi
+  fi
+  rm -rf "$tmp"
+  [ -n "$ok" ]
+}
+
+install_quota_cli() {
+  local q pre cargo why="there is no prebuilt binary for $(uname -s) $(uname -m)"
+  if q="$(find_quota_cli)"; then echo "quota-cli: already installed at $q"; return; fi
+  if pre="$(prebuilt_quota_cli)"; then
+    # shellcheck disable=SC2086  # "<archive> <sha256>" splits into the two arguments
+    if download_quota_cli $pre && q="$(find_quota_cli)"; then
+      echo "quota-cli: installed $QUOTA_CLI_VERSION at $q"; return
+    fi
+    why="the prebuilt binary did not install"
+    echo "quota-cli: $why; trying cargo"
+  fi
+  cargo="$(command -v cargo 2>/dev/null || echo "$HOME/.cargo/bin/cargo")"
+  if [ ! -x "$cargo" ]; then
+    fail quota-cli "$why, and there is no cargo. Install Rust from https://rustup.rs, then run this again"
+    return
+  fi
+  echo "quota-cli: building $QUOTA_CLI_VERSION with cargo (a few minutes)"
+  if "$cargo" install --quiet --locked --version "$QUOTA_CLI_VERSION" quota-cli && q="$(find_quota_cli)"; then
+    echo "quota-cli: installed $QUOTA_CLI_VERSION at $q"
+  else
+    fail quota-cli "cargo install quota-cli did not finish (it needs a C compiler; the error is above)"
+  fi
+}
 
 for tool in codex cursor agy; do
   case "$tool" in
@@ -138,6 +228,12 @@ for tool in codex cursor agy; do
     fi
   fi
 done
+
+if [ "$MODE" = "--remove" ]; then
+  echo "quota-cli: left installed"
+elif [ -n "$QUOTA" ]; then
+  install_quota_cli
+fi
 
 if [ -n "$FAILED" ]; then
   echo "failed for:$FAILED" >&2
