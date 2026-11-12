@@ -28,6 +28,27 @@ Every rule the lead follows is in [SKILL.md](SKILL.md).
 
 ## Install
 
+### Ask Claude Code to install it
+
+Open a Claude Code session and paste this:
+
+```
+Install the build-with-agents skill from https://github.com/ycaophysics/build-with-agents.
+
+1. If ~/.claude/skills/build-with-agents does not exist, clone the repo there. If it exists and is
+   a clone of that repo, run `git pull --ff-only` in it instead. If it exists and is anything else,
+   stop and tell me what is there.
+2. Run `bash ~/.claude/skills/build-with-agents/install.sh` (from Git Bash on Windows). It links the
+   skill into Codex, Cursor and agy where they are installed, and installs quota-cli.
+3. Show me what install.sh printed, and tell me which tools got the skill and which were skipped.
+
+Do not change my Claude Code settings or permissions, and do not log in to any tool for me.
+```
+
+When it finishes, type `/build-with-agents` to check that the skill is there. If it isn't listed, start a new session. Outside workers still need a permission rule and their own logins, which you set up yourself (see [Sign-in and permissions](#sign-in-and-permissions)).
+
+### Install by hand
+
 Claude Code reads `~/.claude/skills/build-with-agents` on its own. Clone the repo to that path:
 
 ```
