@@ -83,11 +83,12 @@ models that draw on the same `usage.py` line (see **Allowance**), because a rate
 line is marked down as a whole. agy has two lines, so agy Opus and agy Carbon can share the hard
 list; Cursor and Codex have one line each, so each appears once per list.
 
-Where things are: `cursor-agent` is `%LOCALAPPDATA%\cursor-agent\cursor-agent.cmd` and `agy` is
-`%LOCALAPPDATA%\agy\bin\agy.exe` (override with the `CURSOR_AGENT` and `AGY` environment
-variables); neither is on Git Bash's PATH. Only
-the owner logs a runner in (`codex login`, `cursor-agent login`, opening `agy` once); never handle
-his credentials.
+Where things are: on Windows, `cursor-agent` is `%LOCALAPPDATA%\cursor-agent\cursor-agent.cmd`
+and `agy` is `%LOCALAPPDATA%\agy\bin\agy.exe`, and neither is on Git Bash's PATH. On macOS and
+Linux both are on PATH, or in `~/.local/bin`. The `CURSOR_AGENT` and `AGY` environment variables
+override either. The scripts run in Git Bash on Windows and in any bash 3.2 or later elsewhere,
+macOS's own included. Only the owner logs a runner in (`codex login`, `cursor-agent login`, opening
+`agy` once); never handle his credentials.
 
 **Outside workers need the owner's permission.** cursor-agent, agy, codex and `claude -p` editing
 files unattended are refused by Claude Code's auto mode ("Create Unsafe Agents") unless the owner
@@ -96,9 +97,9 @@ has added a permission rule for `<SKILL>/bin/dispatch.sh`. Look for one in
 a Claude subagent; do not try an outside worker, and never work around a refusal. Reviews are
 read-only and need no rule.
 
-**Allowance.** `python -I <SKILL>/bin/usage.py` prints one line per runner: the share left in each
-window and when it resets. It takes about 10 seconds (80 at the very most: every outside call has a
-deadline), only reads, writes nothing, and never stops a build.
+**Allowance.** `python3 -I <SKILL>/bin/usage.py` (`python` on Windows) prints one line per runner:
+the share left in each window and when it resets. It takes about 10 seconds (80 at the very most:
+every outside call has a deadline), only reads, writes nothing, and never stops a build.
 
 | Line | Governs |
 |---|---|
@@ -110,17 +111,19 @@ deadline), only reads, writes nothing, and never stops a build.
 
 A line is `LOW` when any window has 10% or less left, `unknown` when it could not be read (a tool
 is missing or logged out), and `ok` otherwise; the output ends with `LOW:` and `UNKNOWN:` lists.
-It reads `quota-cli` (`cargo install quota-cli`) for Claude, Codex and Cursor, and Hermes
-(`hermes usage`) for agy. The settings and their overrides are described at the top of `usage.py`
-and go in `<SKILL>/local.env`, which git ignores.
+It reads `quota-cli` for every runner, agy included (`install.sh` installs it). Hermes (`hermes
+usage`) is optional: when it is installed, it fills in agy's lines if quota-cli cannot read them.
+On macOS the `cursor` line is `unknown`, because cursor-agent keeps its login in the Keychain
+there. The settings and their overrides are described at the top of `usage.py` and go in
+`<SKILL>/local.env`, which git ignores.
 
 - **When to run it**: at setup after the preflight, before each milestone review, after any
   `RATELIMITED` line, and once at the end. Copy its lines into the Runners table in `status.md`;
   the first and last run also go under Measurements.
 - **Workers**: a `LOW` line counts as rate-limited before any model on it is tried. Go to the next
-  entry on the task's list, and bring the line back when a later run shows it `ok`. If `claude` is `LOW`, give every task
-  to the tier's outside runners when outside workers are allowed (otherwise carry on with Claude),
-  and tell the owner in one line what is left and when it resets.
+  entry on the task's list, and bring the line back when a later run shows it `ok`. If `claude` is
+  `LOW`, give every task to the tier's outside runners when outside workers are allowed (otherwise
+  carry on with Claude), and tell the owner in one line what is left and when it resets.
 - **Reviewers** always run, as before. Write a `LOW` reviewer's line next to its review in
   `status.md`, so a failure there explains itself.
 - **`unknown` changes nothing.** Only `LOW` moves work.
@@ -133,8 +136,9 @@ branch (`main` or `master`, whichever exists).
 1. **Resume check.** If the build folder already has a `status.md`, go to **Resume**.
 2. **Nothing else is building here.** In the main checkout: `git status`, `git log <base> -5`,
    `git worktree list`, and the running python, node, codex, cursor-agent, agy and claude
-   processes with their command lines. If another process is editing this repo now, write it in
-   `status.md`, tell the owner in one line, and carry on: the build works only in its own worktree.
+   processes with their command lines (`ps -Ao pid,command` on macOS and Linux). If another
+   process is editing this repo now, write it in `status.md`, tell the owner in one line, and carry
+   on: the build works only in its own worktree.
    The owner's own running app and scheduled jobs are expected (see **Repo notes**).
 3. **Worktree and branch.** Never build in the main checkout. From the main checkout:
    `git worktree add ../<repo-short>-wt-<slug> -b <branch> <base>`. Record the base commit.
@@ -346,7 +350,9 @@ and stops only at the final report.
 
 Codex, Cursor and agy load this skill too. `bash ~/.claude/skills/build-with-agents/install.sh`
 puts it in each one's skills folder (links for Codex and Cursor; a copy for agy, refreshed by
-running it again after an edit). Edit only `~/.claude/skills/build-with-agents`.
+running it again after an edit), and installs quota-cli if it is missing. Edit only
+`~/.claude/skills/build-with-agents`. If `usage.py` says quota-cli is not found, tell the owner to
+run the installer; do not install software yourself during a build.
 
 ## Repo notes
 

@@ -2,11 +2,19 @@
 # Change a model here AND in the roster table in ../SKILL.md, in the same edit. Never add a model
 # the owner has not named, and never fall back to "auto".
 
-# Where the runners live. cursor-agent and agy are not on Git Bash's PATH.
-LOCAL_APPS="$(cygpath -u "${LOCALAPPDATA:-}" 2>/dev/null)"
-LOCAL_APPS="${LOCAL_APPS:-$HOME/AppData/Local}"
-CURSOR="${CURSOR_AGENT:-$LOCAL_APPS/cursor-agent/cursor-agent.cmd}"
-AGY="${AGY:-$LOCAL_APPS/agy/bin/agy.exe}"
+# Where the runners live. On Windows cursor-agent and agy are not on Git Bash's PATH; they are
+# under %LOCALAPPDATA%. On macOS and Linux they are on PATH, or in ~/.local/bin where their
+# installers put them. CURSOR_AGENT and AGY override both.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    LOCAL_APPS="$(cygpath -u "${LOCALAPPDATA:-}" 2>/dev/null)"
+    LOCAL_APPS="${LOCAL_APPS:-$HOME/AppData/Local}"
+    CURSOR="${CURSOR_AGENT:-$LOCAL_APPS/cursor-agent/cursor-agent.cmd}"
+    AGY="${AGY:-$LOCAL_APPS/agy/bin/agy.exe}" ;;
+  *)
+    CURSOR="${CURSOR_AGENT:-$(command -v cursor-agent 2>/dev/null || echo "$HOME/.local/bin/cursor-agent")}"
+    AGY="${AGY:-$(command -v agy 2>/dev/null || echo "$HOME/.local/bin/agy")}" ;;
+esac
 
 # Reviewers, run at the same time on every milestone.
 CODEX_REVIEW_MODEL="${CODEX_REVIEW_MODEL:-gpt-6.1-sol}"        # never astra (owner, 2026-10-03)

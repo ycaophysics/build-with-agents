@@ -27,8 +27,8 @@ no extra features, no refactors, no other tasks, no outside reviewers, no agents
   without `-n`; that alone is not a failure.
 - A worktree may have no virtual environment or `node_modules` of its own: use the commands below.
 <TOOL_NOTES>
-- The default shell may be Windows PowerShell 5.1, which rejects `&&`: one command per line, or
-  use Bash.
+- On Windows the default shell may be Windows PowerShell 5.1, which rejects `&&`: one command per
+  line, or use Bash.
 - Long output goes to `<BUILD>/logs/<TASK>-<what>.log`; refer to it by path.
 
 ## Data safety

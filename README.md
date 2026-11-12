@@ -20,10 +20,11 @@ Every rule the lead follows is in [SKILL.md](SKILL.md).
 
 ## Requirements
 
-- Windows with Git Bash. The install script makes Windows directory junctions, and the scripts look for cursor-agent and agy under `%LOCALAPPDATA%`.
+- Windows with Git Bash, macOS, or Linux. The scripts need bash 3.2 or later, so the bash that ships with macOS is enough.
 - Claude Code.
-- Python 3, for the allowance check.
-- Optional: the Codex CLI, cursor-agent and agy as reviewers and outside workers; Node.js for the agy review guard; quota-cli and Hermes for the allowance check. A missing tool is reported, and the build goes on without it.
+- Python 3, for the allowance check (`python3`, or `python` on Windows).
+- quota-cli for the allowance check. The installer installs it (see below).
+- Optional: the Codex CLI, cursor-agent and agy as reviewers and outside workers; Node.js for the agy review guard; Hermes as a second source for agy's allowance. A missing tool is reported, and the build goes on without it.
 
 ## Install
 
@@ -33,17 +34,24 @@ Claude Code reads `~/.claude/skills/build-with-agents` on its own. Clone the rep
 git clone https://github.com/ycaophysics/build-with-agents.git ~/.claude/skills/build-with-agents
 ```
 
-Codex, Cursor and agy need the installer. Run it from Git Bash:
+Codex, Cursor and agy need the installer. Run it from Git Bash on Windows, or from any terminal on macOS and Linux:
 
 ```
 bash ~/.claude/skills/build-with-agents/install.sh
 ```
 
-Codex gets a directory junction at `~/.codex/skills/build-with-agents`, and Cursor gets one at `~/.cursor/skills/build-with-agents`, so an edit in the Claude Code folder shows up in both at once. agy skips linked folders, so the script copies the skill to `~/.gemini/config/skills/build-with-agents` instead. After you edit the skill, run the installer again or agy keeps the old copy.
+Codex gets a link at `~/.codex/skills/build-with-agents`, and Cursor gets one at `~/.cursor/skills/build-with-agents`, so an edit in the Claude Code folder shows up in both at once. The link is a directory junction on Windows and a symbolic link on macOS and Linux. agy skips linked folders, so the script copies the skill to `~/.gemini/config/skills/build-with-agents` instead. After you edit the skill, run the installer again or agy keeps the old copy.
 
 A tool that is not installed is skipped. If a tool is installed and only its `skills` folder is missing, the script creates that folder. It never changes the folder it installs from. Edit the skill in `~/.claude/skills/build-with-agents`, not in the other tools' folders.
 
-To remove it from Codex, Cursor and agy and keep the Claude Code copy:
+The installer also installs [quota-cli](https://github.com/pinkpixel-dev/quota) 0.4.0 for the allowance check, unless you already have it. An older copy that cargo installed is upgraded, because quota-cli reads agy only from 0.4.0.
+
+- **Linux (x86_64) and Windows:** it downloads the prebuilt binary to `~/.local/bin`, after checking it against a SHA-256 hash pinned in the script.
+- **macOS, and other Linux machines:** there is no prebuilt binary, so it builds quota-cli with `cargo install`. This takes under a minute on a recent Mac and needs [Rust](https://rustup.rs) and a C compiler.
+
+To skip this step, pass `--no-quota-cli`.
+
+To remove the skill from Codex, Cursor and agy and keep the Claude Code copy (quota-cli stays installed):
 
 ```
 bash ~/.claude/skills/build-with-agents/install.sh --remove
@@ -108,10 +116,10 @@ A `PASS` verdict with an error exit or a missing report counts as `FAIL`. A lock
 | `claude` | quota-cli | the lead and every Claude subagent |
 | `codex` | quota-cli | Codex as reviewer and as worker |
 | `cursor` | quota-cli | Cursor as reviewer and as worker |
-| `agy-gemini` | Hermes (`hermes usage`) | agy Gemini 4 Carbon and Gemini 4 Hydrogen |
-| `agy-claude` | Hermes | agy Opus |
+| `agy-gemini` | quota-cli (Gemini pool) | agy Gemini 4 Carbon and Gemini 4 Hydrogen |
+| `agy-claude` | quota-cli (Claude/GPT pool) | agy Opus |
 
-quota-cli (`cargo install quota-cli`) reads each tool's saved login without changing it. A line is `LOW` when any window has 10% or less left, `unknown` when its numbers could not be read, and `ok` otherwise. The check only reads, usually takes about 10 seconds (80 at most), and never stops a build. Anything in the tools' output that looks like an email address, a login token or a home folder is hidden.
+quota-cli reads each tool's saved login without changing it. It reads agy's own login from version 0.4.0. If quota-cli cannot read agy and Hermes is installed, Hermes (`hermes usage`) fills in the two agy lines, so you don't need Hermes. On macOS the `cursor` line shows `unknown`: cursor-agent keeps its login in the Keychain there, and quota-cli 0.4.0 reads it only from `~/.config/cursor/auth.json`. A line is `LOW` when any window has 10% or less left, `unknown` when its numbers could not be read, and `ok` otherwise. The check only reads, usually takes about 10 seconds (80 at most), and never stops a build. Anything in the tools' output that looks like an email address, a login token or a home folder is hidden.
 
 The lead runs the check at setup, before each milestone review, after any `RATELIMITED` result, and at the end. A `LOW` worker is treated as rate limited before it is tried, so its task goes to the next runner for that size, and it comes back once a later check shows it `ok`. If `claude` itself is `LOW`, tasks go to outside workers when you have allowed them, and the lead tells you what is left and when it resets. Reviewers run even when `LOW`. An `unknown` line changes nothing. The first and last checks go in the final report, so you can see what the build used.
 
@@ -161,7 +169,7 @@ The report covers what now works (with screenshots for screen changes), every ch
 
 [bin/preflight.sh](bin/preflight.sh) prints one line per runner: whether it is installed and logged in, its version, and whether every model in the roster is available to it. With `--live` it also asks each reviewer model for one word, which takes one to three minutes. A runner that is down is marked in `status.md` and routed around.
 
-Every outside call has a deadline. On Windows, GNU `timeout` often stops only the wrapper and leaves agy, Node or Codex running. [bin/deadline.sh](bin/deadline.sh) stops the whole process tree instead, using `taskkill` under Git Bash and process groups elsewhere.
+Every outside call has a deadline. GNU `timeout` is not used: on Windows it often stops only the wrapper and leaves agy, Node or Codex running, and macOS does not have it. [bin/deadline.sh](bin/deadline.sh) stops the whole process tree instead. Under Git Bash it uses `taskkill`. On Linux and macOS it starts each call in a process group of its own and stops the group. Linux does this with `setsid`; macOS has no `setsid`, so it uses the Perl that ships with macOS.
 
 
 ## Sign-in and permissions
@@ -170,7 +178,7 @@ You log each runner in yourself: `codex login`, `cursor-agent login`, and openin
 
 Reviews need no extra permission. Outside workers do: Claude Code's auto mode will not let cursor-agent, agy, codex or `claude -p` edit files on their own until you allow `bin/dispatch.sh` with a permission rule in `~/.claude/settings.json` or the repo's `.claude/settings*.json`. Without that rule, every task stays with a Claude subagent.
 
-cursor-agent is expected at `%LOCALAPPDATA%\cursor-agent\cursor-agent.cmd` and agy at `%LOCALAPPDATA%\agy\bin\agy.exe`. Set `CURSOR_AGENT` or `AGY` if yours are somewhere else.
+On Windows, cursor-agent is expected at `%LOCALAPPDATA%\cursor-agent\cursor-agent.cmd` and agy at `%LOCALAPPDATA%\agy\bin\agy.exe`. On macOS and Linux they are looked for on your PATH, then in `~/.local/bin`, where their installers put them. Set `CURSOR_AGENT` or `AGY` if yours are somewhere else.
 
 ## Settings
 
@@ -179,9 +187,9 @@ The allowance check reads these from the environment, or from `local.env` next t
 | Setting | Default | What it does |
 |---|---|---|
 | `USAGE_LOW_PCT` | 10 | A runner is `LOW` at or below this percent left in any window |
-| `QUOTA_CLI` | `quota-cli` on PATH, then `~/.cargo/bin` | Path to quota-cli |
+| `QUOTA_CLI` | `quota-cli` on PATH, then `~/.cargo/bin`, then `~/.local/bin` | Path to quota-cli |
 | `QUOTA_WATCH` | none | A Python file defining `run_quota_cli(None)`, tried before quota-cli. Useful when quota-cli misreads Cursor on Windows |
-| `HERMES` | `hermes` on PATH, then `%LOCALAPPDATA%\hermes\bin` | Path to Hermes |
+| `HERMES` | `hermes` on PATH, then `%LOCALAPPDATA%\hermes\bin` on Windows or `~/.local/bin` elsewhere | Path to Hermes, which is optional |
 
 The other scripts read these environment variables:
 
@@ -192,7 +200,7 @@ The other scripts read these environment variables:
 | `REVIEW_TIMEOUT` | 2700 | Seconds before the Codex and Cursor reviews are stopped |
 | `CARBON_REVIEW_TIMEOUT` | 5400 | Seconds before the agy Carbon review is stopped |
 | `CODEX_REVIEW_MODEL`, `CODEX_REVIEW_EFFORT`, `CURSOR_REVIEW_MODEL`, `CARBON_REVIEW_MODEL` | see `bin/roster.sh` | Reviewer models. `auto`, and any model with "astra" in its name, are ignored |
-| `CURSOR_AGENT`, `AGY` | under `%LOCALAPPDATA%` | Where cursor-agent and agy are installed |
+| `CURSOR_AGENT`, `AGY` | under `%LOCALAPPDATA%` on Windows; on PATH, then in `~/.local/bin`, elsewhere | Where cursor-agent and agy are installed |
 
 If `repo-notes.local.md` exists next to SKILL.md, the lead reads the section for the repo it is building and copies its data rules into every worker's brief. Git ignores this file too.
 
@@ -209,5 +217,5 @@ If `repo-notes.local.md` exists next to SKILL.md, the lead reads the section for
 | `bin/deadline.sh` | Deadlines that stop a whole process tree |
 | `bin/agy-readonly-guard.mjs` | Keeps the agy reviewer read-only |
 | `templates/` | The status file, worker rules and review brief that the lead fills in |
-| `install.sh` | Installs the skill for Codex, Cursor and agy |
+| `install.sh` | Installs the skill for Codex, Cursor and agy, and installs quota-cli |
 | `TODOS.md` | Known follow-ups |
