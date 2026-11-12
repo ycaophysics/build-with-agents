@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How much allowance each build runner has left: one line per runner. Read-only; never blocks a build.
 
-    python -I usage.py
+    python3 -I usage.py      (python -I usage.py on Windows)
 
 Runners and where each one is read from. Every source is optional: a source that is missing, slow
 or failing makes its runners "unknown", never "low".
@@ -27,7 +27,8 @@ as UTF-8 or as PowerShell's UTF-16). A leading ~ or %VAR% in a path is expanded.
                    stderr, returncode}: a drop-in for quota-cli that works around its Windows
                    problem with Cursor. It runs in a separate Python process, so a hang, a crash or a
                    sys.exit in it cannot hurt this check; if it fails, quota-cli is used instead.
-    HERMES         path to hermes                          (default: PATH, then %LOCALAPPDATA%/hermes/bin)
+    HERMES         path to hermes                          (default: PATH, then %LOCALAPPDATA%/hermes/bin on
+                                                            Windows or ~/.local/bin elsewhere)
 """
 from __future__ import annotations
 
@@ -61,10 +62,12 @@ WATCH_HELPER = (
     "print(json.dumps({'stdout': raw.get('stdout'), 'stderr': raw.get('stderr')}))\n"
 )
 
-# What must never reach the output: an email address, a Windows home folder, a long token.
+# What must never reach the output: an email address, a home folder (C:\Users\<name>,
+# /Users/<name>, /home/<name>), a long token.
 HIDE = re.compile(
     r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"
     r"|[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s]+"
+    r"|/(?:Users|home)/[^/\s]+"
     r"|\b(?=[\w-]*\d)(?=[\w-]*[A-Za-z])[\w-]{24,}\b"
 )
 
@@ -232,8 +235,12 @@ def collect_quota(cfg: dict) -> dict:
 
 # ----------------------------------------------------------------------------- Hermes, for agy
 def collect_agy(cfg: dict) -> dict:
-    local = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-    exe = cfg.get("HERMES") or shutil.which("hermes") or str(Path(local) / "hermes" / "bin" / "hermes.exe")
+    if os.name == "nt":
+        local = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        default = Path(local) / "hermes" / "bin" / "hermes.exe"
+    else:
+        default = Path.home() / ".local" / "bin" / "hermes"
+    exe = cfg.get("HERMES") or shutil.which("hermes") or str(default)
     if not (Path(exe).is_file() or shutil.which(exe)):
         return unknown("Hermes not found", AGY_RUNNERS)
     try:

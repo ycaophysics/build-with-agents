@@ -65,14 +65,17 @@ VERDICT="$BUILD/logs/$TASK.verdict"
 REPORT="$BUILD/reports/$TASK.md"
 rm -f "$VERDICT" "$REPORT"
 
-# Windows programs get absolute C:/... paths (forward slashes work in every runner and need no
-# escaping; absolute, because the runners start in another folder).
-win() { cygpath -ma "$1" 2>/dev/null || printf '%s' "$1"; }
-WT_W="$(win "$WT")"; BUILD_W="$(win "$BUILD")"; BRIEF_W="$(win "$BRIEF")"
-VERDICT_W="$(win "$VERDICT")"; REPORT_W="$(win "$REPORT")"
+# Runners get absolute paths, because they start in another folder. On Windows those are C:/...
+# paths (forward slashes work in every runner and need no escaping).
+runner_path() {
+  cygpath -ma "$1" 2>/dev/null && return
+  case "$1" in /*) printf '%s' "$1" ;; *) printf '%s/%s' "$PWD" "$1" ;; esac
+}
+WT_W="$(runner_path "$WT")"; BUILD_W="$(runner_path "$BUILD")"; BRIEF_W="$(runner_path "$BRIEF")"
+VERDICT_W="$(runner_path "$VERDICT")"; REPORT_W="$(runner_path "$REPORT")"
 
-# Short on purpose: cursor-agent runs through cmd.exe, which cuts a command line at 8,191
-# characters, and an inlined brief once lost its "what not to do" list that way. The worker
+# Short on purpose: on Windows cursor-agent runs through cmd.exe, which cuts a command line at
+# 8,191 characters, and an inlined brief once lost its "what not to do" list that way. The worker
 # reads the brief from disk. cmd.exe also cuts an argument at its first line break (tested
 # 2026-11-11), so cursor-agent is given a one-line pointer to this text, not the text itself.
 PROMPT="You are an implementation worker doing exactly one task: ${TASK}.
@@ -83,7 +86,7 @@ When you finish, write two files; they are the only handoff the lead reads, and 
 
 PROMPT_FILE="$BUILD/logs/$TASK.prompt.md"
 printf '%s\n' "$PROMPT" > "$PROMPT_FILE"
-PROMPT_ONE_LINE="Read $(win "$PROMPT_FILE") and follow it exactly."
+PROMPT_ONE_LINE="Read $(runner_path "$PROMPT_FILE") and follow it exactly."
 
 run_with_deadline() { run_deadline "$TIMEOUT" "$@"; }
 
@@ -100,9 +103,11 @@ case "$RUNNER" in
       --add-dir "$BUILD_W" --output-format text "$PROMPT_ONE_LINE" >"$LOG" 2>&1; rc=$? ;;
   codex)
     # Codex's Windows sandbox ("unelevated" in ~/.codex/config.toml) cannot create pipes or temp
-    # files, which looks like a broken repo. A worker that edits and runs tests needs full access.
+    # files, which looks like a broken repo. On macOS and Linux its workspace-write sandbox would
+    # refuse the report and verdict, which go to the build folder outside the worktree. A worker
+    # that edits, runs tests and writes its report needs full access.
     printf '%s' "$PROMPT" | run_with_deadline codex exec - -m "$MODEL" -s danger-full-access \
-      -C "$WT_W" -o "$(win "$BUILD/logs/$TASK-$STAMP.last.md")" >"$LOG" 2>&1; rc=$? ;;
+      -C "$WT_W" -o "$(runner_path "$BUILD/logs/$TASK-$STAMP.last.md")" >"$LOG" 2>&1; rc=$? ;;
 esac
 elapsed=$(( $(date +%s) - start ))
 dur=$(printf '%02d:%02d:%02d' $((elapsed/3600)) $((elapsed%3600/60)) $((elapsed%60)))

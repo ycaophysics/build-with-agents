@@ -1,14 +1,19 @@
 # run_deadline <seconds> <command...>: run a command, and stop it and everything it started when
-# the deadline passes. Sourced by dispatch.sh and review.sh.
+# the deadline passes. Sourced by dispatch.sh, review.sh and preflight.sh.
 #
 # Returns the command's own exit code, or 124 when the deadline stopped it. It returns only after
 # the command has exited, so a caller that cleans up afterwards (dispatch.sh removes the task
 # lock) never does so while a worker is still writing.
 #
 # GNU timeout is not used: on Windows it often stops only the wrapper and leaves agy, Node or
-# Codex running. Here the command runs in the background, and at the deadline its whole process
-# tree is killed: with taskkill under Git Bash (the Windows pid comes from /proc/<pid>/winpid;
-# Git Bash needs taskkill's slashes doubled), and by process group elsewhere.
+# Codex running, and macOS does not have it. Here the command runs in the background, and at the
+# deadline its whole process tree is killed:
+#   Windows  with taskkill under Git Bash (the Windows pid comes from /proc/<pid>/winpid; Git Bash
+#            needs taskkill's slashes doubled)
+#   Linux    by process group: setsid starts the command in a group of its own
+#   macOS    the same, but perl starts it, because macOS has no setsid
+#   other    every process below the command, read from ps (one whose parent already exited is
+#            missed)
 
 _deadline_msys_tree() {  # prints "<pid> <winpid>" for a Git Bash pid and every descendant
   # Git Bash processes do not carry their Windows parent, so taskkill //T alone misses the ones a
@@ -19,6 +24,16 @@ _deadline_msys_tree() {  # prints "<pid> <winpid>" for a Git Bash pid and every 
       keep[root] = 1; grew = 1
       while (grew) { grew = 0; for (p in par) if (!(p in keep) && (par[p] in keep)) { keep[p] = 1; grew = 1 } }
       for (p in keep) if (p in wp) print p, wp[p]
+    }'
+}
+
+_deadline_descendants() {  # prints every pid below a pid, read from ps (macOS and Linux)
+  ps -A -o pid= -o ppid= 2>/dev/null | awk -v root="$1" '
+    { par[$1] = $2 }
+    END {
+      keep[root] = 1; grew = 1
+      while (grew) { grew = 0; for (p in par) if (!(p in keep) && (par[p] in keep)) { keep[p] = 1; grew = 1 } }
+      for (p in keep) if (p != root) print p
     }'
 }
 
@@ -37,8 +52,9 @@ _deadline_kill_tree() {  # _deadline_kill_tree <pid> <own-process-group: yes|no>
     sleep 5
     kill -KILL -- "-$pid" 2>/dev/null
   else
-    pkill -KILL -P "$pid" 2>/dev/null
-    kill -KILL "$pid" 2>/dev/null
+    # The whole list is read before the first kill: once a parent is gone, its children belong
+    # to init and can no longer be traced to the command.
+    for p in "$pid" $(_deadline_descendants "$pid"); do kill -KILL "$p" 2>/dev/null; done
   fi
 }
 
@@ -47,10 +63,17 @@ run_deadline() {
   local own_group=no pid start
   # `<&0` keeps the caller's stdin (a pipe or a file): a background command would otherwise read
   # /dev/null.
-  # Off Windows, setsid puts the command in its own process group, so the whole group can be
-  # killed without killing this script.
-  if [ ! -r /proc/self/winpid ] && command -v setsid >/dev/null 2>&1; then
+  # Off Windows the command leads a new session, so its whole process group can be killed without
+  # killing this script. A background job of this script never leads a group, so setsid (and perl)
+  # can start that session without forking, and $! stays the command's own pid.
+  if [ -r /proc/self/winpid ]; then
+    "$@" <&0 & pid=$!
+  elif command -v setsid >/dev/null 2>&1; then
     setsid "$@" <&0 & pid=$!; own_group=yes
+  elif command -v perl >/dev/null 2>&1; then
+    perl -MPOSIX -e 'defined POSIX::setsid() or POSIX::setpgid(0, 0);
+      exec { $ARGV[0] } @ARGV or do { print STDERR "$ARGV[0]: $!\n"; exit 127 }' -- "$@" <&0 & pid=$!
+    own_group=yes
   else
     "$@" <&0 & pid=$!
   fi

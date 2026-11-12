@@ -49,15 +49,18 @@ BRIEF="$BUILD/reviews/$M-brief.md"
 git -C "$CO" rev-parse --git-dir >/dev/null 2>&1 || { echo "$M NOCHECKOUT $CO is not a git checkout" >&2; exit 2; }
 mkdir -p "$BUILD/logs" "$BUILD/reviews"
 
-# Absolute C:/... paths, because the runners start in another folder.
-win() { cygpath -ma "$1" 2>/dev/null || printf '%s' "$1"; }
-CO_W="$(win "$CO")"; BUILD_W="$(win "$BUILD")"; BRIEF_W="$(win "$BRIEF")"
+# Absolute paths, because the runners start in another folder: C:/... paths on Windows.
+runner_path() {
+  cygpath -ma "$1" 2>/dev/null && return
+  case "$1" in /*) printf '%s' "$1" ;; *) printf '%s/%s' "$PWD" "$1" ;; esac
+}
+CO_W="$(runner_path "$CO")"; BUILD_W="$(runner_path "$BUILD")"; BRIEF_W="$(runner_path "$BRIEF")"
 ASK="Read ${BRIEF_W} and follow it exactly. Reply with the review report only."
 
 run_codex() {
   run_deadline "$TIMEOUT" codex exec - -s read-only -m "$CODEX_REVIEW_MODEL" \
     -c "model_reasoning_effort=\"$CODEX_REVIEW_EFFORT\"" -C "$CO_W" \
-    -o "$(win "$BUILD/reviews/$M-codex.md")" < "$BRIEF" > "$BUILD/logs/$M-codex.log" 2>&1
+    -o "$(runner_path "$BUILD/reviews/$M-codex.md")" < "$BRIEF" > "$BUILD/logs/$M-codex.log" 2>&1
 }
 
 run_cursor() {
@@ -87,16 +90,17 @@ setup_carbon_guard() {
   GUARD_DIR="$(mktemp -d)"
   cp "$HERE/agy-readonly-guard.mjs" "$GUARD_DIR/guard.mjs"
   # agy hands the hook command to Windows with its quotes intact, so the paths in it can have no
-  # quotes and no spaces.
+  # quotes and no spaces. The same rule is kept on macOS and Linux. There, the short-name fallback
+  # (cygpath -d) does not exist, but temp folders have no spaces.
   local gpath glog
-  gpath="$(win "$GUARD_DIR/guard.mjs")"
+  gpath="$(runner_path "$GUARD_DIR/guard.mjs")"
   case "$gpath" in *" "*) gpath="$(cygpath -d "$GUARD_DIR/guard.mjs" 2>/dev/null | tr '\\' '/')" ;; esac
   case "$gpath" in ""|*" "*)
     CARBON_NOTE=" WARNING guard not installed: its temp path has spaces, so carbon ran with --sandbox only"
     return ;;
   esac
-  glog="$(win "$BUILD/logs/$M-carbon-guard.log")"
-  case "$glog" in *" "*) GUARD_LOG_TMP="$GUARD_DIR/guard.log"; glog="$(win "$GUARD_LOG_TMP")" ;; esac
+  glog="$(runner_path "$BUILD/logs/$M-carbon-guard.log")"
+  case "$glog" in *" "*) GUARD_LOG_TMP="$GUARD_DIR/guard.log"; glog="$(runner_path "$GUARD_LOG_TMP")" ;; esac
   mkdir -p "$CO/.agents"
   printf '{\n  "read-only-guard": {\n    "PreToolUse": [\n      {"matcher": "*", "hooks": [{"type": "command", "command": "node %s %s", "timeout": 10}]}\n    ]\n  }\n}\n' \
     "$gpath" "$glog" > "$CO/.agents/hooks.json" && HOOKS_MADE=yes
@@ -116,21 +120,24 @@ is_limited() {
 
 case " $REVIEWERS " in *" carbon "*) setup_carbon_guard ;; esac
 
-declare -A PID START
+# Each reviewer's pid and start time go in PID_<reviewer> and START_<reviewer>: the bash that
+# macOS ships (3.2) has no associative arrays.
+STARTED=""
 for r in $REVIEWERS; do
   case "$r" in codex|cursor|carbon) ;; *) echo "$M $r UNKNOWN reviewer (want codex, cursor or carbon)" >&2; continue ;; esac
   rm -f "$BUILD/reviews/$M-$r.md"
-  START[$r]=$(date +%s)
-  "run_$r" & PID[$r]=$!
+  printf -v "START_$r" '%s' "$(date +%s)"
+  "run_$r" & printf -v "PID_$r" '%s' "$!"
+  STARTED="$STARTED $r"
 done
 
 model_of() { case "$1" in codex) echo "$CODEX_REVIEW_MODEL";; cursor) echo "$CURSOR_REVIEW_MODEL";; carbon) echo "$CARBON_REVIEW_MODEL";; esac; }
 
 any=0
-for r in $REVIEWERS; do
-  [ -n "${PID[$r]:-}" ] || continue
-  wait "${PID[$r]}"; rc=$?
-  e=$(( $(date +%s) - START[$r] )); dur=$(printf '%02d:%02d:%02d' $((e/3600)) $((e%3600/60)) $((e%60)))
+for r in $STARTED; do
+  pid_var="PID_$r"; start_var="START_$r"
+  wait "${!pid_var}"; rc=$?
+  e=$(( $(date +%s) - ${!start_var} )); dur=$(printf '%02d:%02d:%02d' $((e/3600)) $((e%3600/60)) $((e%60)))
   out="$BUILD/reviews/$M-$r.md"; log="$BUILD/logs/$M-$r.log"
   bytes=$(wc -c < "$out" 2>/dev/null || echo 0); bytes=$(echo "$bytes" | tr -d ' ')
   note=""

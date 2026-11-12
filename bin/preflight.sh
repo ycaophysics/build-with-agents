@@ -61,7 +61,9 @@ if [ -e "$CURSOR" ]; then
   if [ "$rc" -eq 124 ]; then
     echo "cursor : NOT CHECKED, its model list did not come back within 90 s (not read as logged out); run preflight again"
   elif grep -qiE "authentication required|not logged in|login" "$T/cursor.txt" && ! grep -q " - " "$T/cursor.txt"; then
-    echo "cursor : LOGGED OUT. The owner runs: & '$(cygpath -w "$CURSOR")' login"
+    if command -v cygpath >/dev/null 2>&1; then login="& '$(cygpath -w "$CURSOR")' login"   # PowerShell
+    else login="'$CURSOR' login"; fi
+    echo "cursor : LOGGED OUT. The owner runs: $login"
   else
     rmiss="$(listed "$T/cursor.txt" "$CURSOR_REVIEW_MODEL")"
     miss="$(listed "$T/cursor.txt" "$CURSOR_EASY_MODEL" "$CURSOR_MEDIUM_MODEL" "$CURSOR_OPUS_MODEL")"
