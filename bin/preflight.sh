@@ -42,6 +42,12 @@ if command -v codex >/dev/null 2>&1; then
   case "$st" in
     *"Logged in"*)
       line="codex  : ok, $(codex --version 2>/dev/null | head -1), $st; review model $CODEX_REVIEW_MODEL at $CODEX_REVIEW_EFFORT"
+      # Codex has no command that lists models; the cache it keeps of them is the best check there is.
+      cache="${CODEX_HOME:-$HOME/.codex}/models_cache.json"
+      if [ -f "$cache" ]; then
+        miss=""; for m in "$CODEX_WORKER_MODEL" "$CODEX_HARD_MODEL"; do grep -qF "\"$m\"" "$cache" || miss="$miss $m"; done
+        [ -n "$miss" ] && line="$line; WORKER MODEL NOT IN CODEX'S MODEL CACHE:$miss (route that seat to the next runner on its tier and tell the owner; never substitute)"
+      fi
       if [ -n "$LIVE" ]; then
         if echo "Reply with the single word READY." | run_deadline 300 codex exec - -s read-only -m "$CODEX_REVIEW_MODEL" \
              -c "model_reasoning_effort=\"low\"" --skip-git-repo-check -o "$T/codex.txt" >"$T/codex.log" 2>&1 \
@@ -64,7 +70,7 @@ if [ -e "$CURSOR" ]; then
     echo "cursor : LOGGED OUT. The owner runs: & '$(cygpath -w "$CURSOR")' login"
   else
     rmiss="$(listed "$T/cursor.txt" "$CURSOR_REVIEW_MODEL")"
-    miss="$(listed "$T/cursor.txt" "$CURSOR_EASY_MODEL" "$CURSOR_MEDIUM_MODEL" "$CURSOR_OPUS_MODEL")"
+    miss="$(listed "$T/cursor.txt" "$CURSOR_EASY_MODEL" "$CURSOR_OPUS_MODEL" "$CURSOR_FABLE_MODEL")"
     line="cursor : ok; review model $CURSOR_REVIEW_MODEL"
     [ -n "$rmiss" ] && line="$line; REVIEW MODEL NOT LISTED:$rmiss (the Cursor reviewer is unavailable; do not replace it with another model)"
     [ -n "$miss" ] && line="$line; WORKER MODEL NOT LISTED:$miss (route that seat to the next runner on its tier and tell the owner; never substitute)"

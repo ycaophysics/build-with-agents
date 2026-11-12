@@ -15,6 +15,7 @@ Started: <YYYY-MM-DD HH:MM> by <LEAD AND MODEL>.
 |---|---|---|---|---|
 | Claude subagent | claude-opus-5-5, high | up | | <claude line> |
 | Claude subagent, easy | claude-sonnet-5-5, high | up | | (same line) |
+| Claude subagent, a hard task's step up | claude-fable-5-2, high | up | | (same line) |
 | codex (review) | gpt-6.1-sol, xhigh | <up / logged out / down> | | <codex line> |
 | cursor (review) | grok-4.7-xhigh | | | <cursor line> |
 | agy Carbon (review) | gemini-4-carbon-high | | | <agy-gemini line> |

@@ -60,21 +60,26 @@ the plan (and any notes). `<SKILL>` below means this skill's folder,
 |---|---|---|---|
 | Lead | this Claude Code session | Opus 5.5 | |
 | Worker, hard and medium tasks | Claude subagent | the repo's `opus-high` agent if `.claude/agents/opus-high.md` exists; else `general-purpose` with `model: "opus"`, `effort: "high"` | Agent tool |
+| Worker, hard task still blocked after its follow-up (its step up) | Claude subagent | Fable 5.2: `general-purpose` with `model: "fable"`, `effort: "high"` | Agent tool |
 | Worker, easy tasks | Claude subagent | Sonnet 5.5: `general-purpose` with `model: "sonnet"`, `effort: "high"` | Agent tool |
-| Worker, easy when Claude Code is out | cursor-agent | `cursor-grok-4.6-high-fast` | `dispatch.sh` (outside workers must be allowed) |
+| Worker, hard when Claude Code is out | agy | `claude-opus-5-5-high` (the same Opus 5.5, Antigravity plan) | `dispatch.sh` (outside workers must be allowed) |
+| Worker, hard second fallback; medium third fallback | cursor-agent | `claude-opus-5-5-high` (Opus 5.5 on Cursor's plan) | `dispatch.sh` (allowed) |
+| Worker, hard third fallback; medium when Claude Code is out | agy | `gemini-4-carbon-medium` (high is too slow for work) | `dispatch.sh` (allowed) |
+| Worker, hard fourth fallback | codex | `gpt-6-astra`, reasoning `xhigh` | `dispatch.sh` (allowed) |
+| Worker, medium second fallback; last resort for any task | codex | `gpt-6.1-sol`, reasoning `xhigh` | `dispatch.sh` (allowed) |
+| Worker, a hard task's step up when Claude Code is out | cursor-agent | `claude-fable-5-2-high` | `dispatch.sh` (allowed) |
+| Worker, easy when Claude Code is out | cursor-agent | `cursor-grok-4.6-high-fast` | `dispatch.sh` (allowed) |
 | Worker, easy second fallback | agy | `gemini-4-hydrogen-high` | `dispatch.sh` (allowed) |
-| Worker, medium when Claude Code is out | agy | `gemini-4-carbon-medium` (high is too slow for work) | `dispatch.sh` (allowed) |
-| Worker, medium second fallback; last resort for any task | codex | `gpt-6.1-sol` | `dispatch.sh` (allowed) |
-| Worker, medium third fallback | cursor-agent | `gpt-5.6-sol-xhigh` | `dispatch.sh` (allowed) |
-| Worker, Opus when Claude Code is out | agy | `claude-opus-5-5-high` (the same Opus 5.5, Antigravity plan) | `dispatch.sh` (allowed) |
-| Worker, Opus second fallback | cursor-agent | `claude-opus-5-thinking-high` (Cursor's key and endpoint) | `dispatch.sh` (allowed) |
 | Reviewer | codex | `gpt-6.1-sol`, reasoning `xhigh`, read-only. **Never astra.** | `review.sh` |
 | Reviewer | cursor-agent | `grok-4.7-xhigh`, plan mode (read-only) | `review.sh` |
 | Reviewer | agy | `gemini-4-carbon-high`, behind a read-only guard. **Never Argon** (Carbon is better: owner, 2026-11-10). | `review.sh` |
 
 The model IDs also live in `<SKILL>/bin/roster.sh`; change both in the same edit. Never pick a
 model outside this table, never fall back to `auto`, never swap a reviewer's model because it is
-down. If a task looks too big for its tier, move it up a tier.
+down. If a task looks too big for its tier, move it up a tier. "Never astra" is a reviewer rule:
+Astra takes hard tasks as their last fallback and is the model when Codex leads. Each tier's
+fallback list uses one model per runner, because a rate-limited or `LOW` runner is marked down as a
+whole.
 
 Where things are: `cursor-agent` is `%LOCALAPPDATA%\cursor-agent\cursor-agent.cmd` and `agy` is
 `%LOCALAPPDATA%\agy\bin\agy.exe` (override with the `CURSOR_AGENT` and `AGY` environment
@@ -149,10 +154,11 @@ branch (`main` or `master`, whichever exists).
 - Each task: one bounded job, the files it owns, the plan sections that bind it, its exact
   verification commands, and a tier:
   - **hard**: money, orders, broker or account paths, state machines, concurrency, migrations,
-    anything where a mistake loses money or data. Claude subagent (outside: agy Opus, then Cursor
-    Opus). Never a fast or easy-tier model.
+    anything where a mistake loses money or data. Claude subagent on Opus 5.5 (outside: agy Opus,
+    then Cursor Opus, then agy Carbon medium, then codex Astra). Its step up, when it stays
+    blocked, is Fable 5.2 (section 4). Never a fast or easy-tier model.
   - **medium**: plumbing with real edge cases, tests that need thought, screens. Claude subagent
-    (outside: agy Carbon medium, then codex, then Cursor `gpt-5.6-sol-xhigh`).
+    on Opus 5.5 (outside: agy Carbon medium, then codex Sol, then Cursor Opus).
   - **easy**: mechanical and fully specified (copy edits from given text, renames, a constant, a
     test from a given table). Claude subagent on Sonnet 5.5 at high effort (outside, only when
     Claude is out: Cursor grok, then agy Gemini 4 Hydrogen).
@@ -167,8 +173,8 @@ branch (`main` or `master`, whichever exists).
   angle brackets filled in, plus the task section. Workers read the brief from disk.
 - **Claude worker**: Agent tool, prompt "Read `<brief>` and follow it exactly. Your final message
   is your report." Name the tier's model and effort from the roster on the call: Opus for hard and
-  medium, `model: "sonnet"` and `effort: "high"` for easy. Let it run in the background and wait
-  for its notification.
+  medium, `model: "sonnet"` and `effort: "high"` for easy, `model: "fable"` and `effort: "high"`
+  for a hard task's step up. Let it run in the background and wait for its notification.
 - **Outside worker** (only when allowed):
   `bash <SKILL>/bin/dispatch.sh <task> <claude|agy|cursor|codex> <model> <brief> <worktree> <build>`.
   It prints one line: `PASS`, `VERIFYFAIL`, `NOVERDICT`, `FAIL`, `EMPTY`, `RATELIMITED` (exit
@@ -191,8 +197,9 @@ branch (`main` or `master`, whichever exists).
   its commits, rerun the tests it says passed, and confirm the main checkout is still clean and
   `<base>` has not moved. A worker exiting cleanly proves nothing.
 - **PARTIAL or BLOCKED**: one follow-up dispatch that names the gap. Still blocked: move the task
-  up a tier once. Still blocked after that: handle it as section 6 says. Never a third attempt at
-  the same tier.
+  up a tier once. A hard task moves up to Fable 5.2: a Claude subagent, or Cursor
+  `claude-fable-5-2-high` when Claude is rate limited or `LOW`. Still blocked after that: handle it
+  as section 6 says. Never a third attempt at the same tier.
 
 ## 5. Milestone review
 
@@ -320,11 +327,13 @@ The roster's lead seat is Codex `gpt-6-astra`; Cursor or agy may lead the same w
 starts one with this skill. A lead without Claude Code's Agent tool sends every worker through
 `dispatch.sh` (Codex launched with `-s danger-full-access` may run it): hard to
 `claude claude-opus-5-5` (on `RATELIMITED`: `agy claude-opus-5-5-high`, then
-`cursor claude-opus-5-thinking-high`), medium to `claude claude-opus-5-5` first (on
-`RATELIMITED`, or when the latest `usage.py` line for `claude` is `LOW`:
-`agy gemini-4-carbon-medium`, then `codex gpt-6.1-sol`, then `cursor gpt-5.6-sol-xhigh`), easy to `claude claude-sonnet-5-5` (on
-`RATELIMITED`: `cursor cursor-grok-4.6-high-fast`, then `agy gemini-4-hydrogen-high`). A `LOW`
-line from `usage.py` counts as `RATELIMITED` in every chain here. Reviews still run through
+`cursor claude-opus-5-5-high`, then `agy gemini-4-carbon-medium`, then `codex gpt-6-astra`; a
+hard task's step up goes to `claude claude-fable-5-2`, or `cursor claude-fable-5-2-high` on
+`RATELIMITED`), medium to `claude claude-opus-5-5` first (on `RATELIMITED`:
+`agy gemini-4-carbon-medium`, then `codex gpt-6.1-sol`, then `cursor claude-opus-5-5-high`), easy
+to `claude claude-sonnet-5-5` (on `RATELIMITED`: `cursor cursor-grok-4.6-high-fast`, then
+`agy gemini-4-hydrogen-high`). A `LOW` line from `usage.py` counts as `RATELIMITED` in every
+chain here. Reviews still run through
 `review.sh`. Codex is a one-shot process: a question printed to the screen
 reaches nobody, so it follows rule 4 and section 6 the same way (a lead's choice in `status.md`)
 and stops only at the final report.

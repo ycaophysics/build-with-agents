@@ -101,8 +101,10 @@ case "$RUNNER" in
   codex)
     # Codex's Windows sandbox ("unelevated" in ~/.codex/config.toml) cannot create pipes or temp
     # files, which looks like a broken repo. A worker that edits and runs tests needs full access.
+    # The effort is set here, not left to the owner's ~/.codex/config.toml (Codex's own default for
+    # gpt-6.1-sol is low).
     printf '%s' "$PROMPT" | run_with_deadline codex exec - -m "$MODEL" -s danger-full-access \
-      -C "$WT_W" -o "$(win "$BUILD/logs/$TASK-$STAMP.last.md")" >"$LOG" 2>&1; rc=$? ;;
+      -c "model_reasoning_effort=\"$CODEX_WORKER_EFFORT\"" -C "$WT_W" -o "$(win "$BUILD/logs/$TASK-$STAMP.last.md")" >"$LOG" 2>&1; rc=$? ;;
 esac
 elapsed=$(( $(date +%s) - start ))
 dur=$(printf '%02d:%02d:%02d' $((elapsed/3600)) $((elapsed%3600/60)) $((elapsed%60)))

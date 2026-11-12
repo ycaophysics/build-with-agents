@@ -73,11 +73,13 @@ Build files go in `~/.claude/plans/<slug>-build/`: a copy of the plan, `status.m
 
 | Size | What it covers | Default worker | When Claude is out |
 |---|---|---|---|
-| Hard | Money, orders, accounts, state machines, concurrency, migrations: anything where a mistake loses money or data | Claude subagent, Opus 5.5 at high effort | agy Opus 5.5, then Cursor Opus 5 |
-| Medium | Plumbing with real edge cases, tests that need thought, screens | Claude subagent, Opus 5.5 at high effort | agy Gemini 4 Carbon (medium), then Codex `gpt-6.1-sol`, then Cursor `gpt-5.6-sol-xhigh` |
+| Hard | Money, orders, accounts, state machines, concurrency, migrations: anything where a mistake loses money or data | Claude subagent, Opus 5.5 at high effort | agy Opus 5.5, then Cursor Opus 5.5, then agy Gemini 4 Carbon (medium), then Codex `gpt-6-astra` at `xhigh` |
+| Medium | Plumbing with real edge cases, tests that need thought, screens | Claude subagent, Opus 5.5 at high effort | agy Gemini 4 Carbon (medium), then Codex `gpt-6.1-sol` at `xhigh`, then Cursor Opus 5.5 |
 | Easy | Mechanical, fully specified changes such as renames, copy edits from given text, or a test from a given table | Claude subagent, Sonnet 5.5 at high effort | Cursor `cursor-grok-4.6-high-fast`, then agy Gemini 4 Hydrogen |
 
-If the repo has `.claude/agents/opus-high.md`, hard and medium tasks use that agent. Codex is the last resort for a task of any size. A task that comes back partial or blocked gets one follow-up attempt, then moves up one size once; it never gets a third try at the same size.
+If the repo has `.claude/agents/opus-high.md`, hard and medium tasks use that agent. Codex is the last resort for a task of any size. A task that comes back partial or blocked gets one follow-up attempt, then moves up one size once; it never gets a third try at the same size. A hard task has no bigger size, so it moves up to Claude Fable 5.2 instead (Cursor's Fable 5.2 when Claude is out).
+
+Each fallback list uses one model per runner. When a runner is rate limited or nearly out of allowance, the lead marks the whole runner down, so a second model on the same runner would never be tried.
 
 Every model ID is in [bin/roster.sh](bin/roster.sh) and in the roster table in SKILL.md. The lead never picks a model outside that list and never falls back to `auto`.
 
