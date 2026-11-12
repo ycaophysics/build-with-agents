@@ -3,26 +3,25 @@
 
     python3 -I usage.py      (python -I usage.py on Windows)
 
-Runners and where each one is read from. Every source is optional: a source that is missing, slow
-or failing makes its runners "unknown", never "low".
-    claude, codex, cursor   quota-cli (`cargo install quota-cli`), which reads each CLI's stored login
-                            read-only and never refreshes it
-    agy-gemini, agy-claude  Hermes: `hermes usage --provider antigravity-subscription-directsdk --json`
-                            (agy-gemini is what Gemini Carbon and Hydrogen use; agy-claude is the Claude
-                            and GPT models agy offers)
+Every runner is read from quota-cli (install.sh installs it), which reads each CLI's stored login
+read-only and never refreshes it. agy-gemini is agy's Gemini pool, which Gemini Carbon and Hydrogen
+use; agy-claude is its Claude/GPT pool. quota-cli reads agy from version 0.4.0. When it cannot read
+agy, Hermes is asked instead if it is installed (`hermes usage --provider
+antigravity-subscription-directsdk --json`); Hermes is optional. Every source is optional: a source
+that is missing, slow or failing makes its runners "unknown", never "low".
 
 A runner is LOW when any of its windows has USAGE_LOW_PCT percent or less left.
 
 It always exits 0 and never prints a traceback. Every outside call has a deadline, so the whole check
 ends in about 80 seconds at the very most (usually 10): the quota side tries the optional QUOTA_WATCH
-helper for up to 40 seconds and then quota-cli for up to 40, while the agy side waits up to 60 for
-Hermes; the two sides run at the same time. It writes nothing, not even a Python cache file.
+helper for up to 40 seconds and then quota-cli for up to 40, while Hermes, when installed, gets up to
+60 at the same time. It writes nothing, not even a Python cache file.
 Anything a tool says that looks like an email address, a login token or a home folder is hidden.
 
 Settings come from the environment, or from local.env next to SKILL.md (git ignores that file; save it
 as UTF-8 or as PowerShell's UTF-16). A leading ~ or %VAR% in a path is expanded.
     USAGE_LOW_PCT  0 to 100, default 10
-    QUOTA_CLI      path to quota-cli                       (default: PATH, then ~/.cargo/bin)
+    QUOTA_CLI      path to quota-cli                       (default: PATH, ~/.cargo/bin, ~/.local/bin)
     QUOTA_WATCH    optional path to a Python file that defines run_quota_cli(None) -> {stdout,
                    stderr, returncode}: a drop-in for quota-cli that works around its Windows
                    problem with Cursor. It runs in a separate Python process, so a hang, a crash or a
@@ -174,8 +173,20 @@ def run(cmd, timeout, env=None):
 
 
 # ----------------------------------------------------------------------------- quota-cli
+def agy_window(label):
+    """quota-cli's label for an antigravity window -> (runner, window label), or None to leave it out.
+    The Gemini pool's labels are plain ("5h", "Wk"); the other pool's start with "Claude/GPT ".
+    Argon's own allowance ("Argon 5h", "Argon Wk") is left out: the build no longer uses Argon."""
+    label = str(label or "").strip()
+    if label.startswith("Claude/GPT "):
+        return "agy-claude", label[len("Claude/GPT "):]
+    if label.startswith("Argon"):
+        return None
+    return "agy-gemini", label
+
+
 def parse_quota(stdout, stderr) -> dict:
-    """quota-cli's JSON array -> {runner: {"windows": [...], "problem": ...}} for claude, codex, cursor."""
+    """quota-cli's JSON array -> {runner: {"windows": [...], "problem": ...}} for every runner."""
     errors = {}
     for line in (stderr or "").splitlines():
         m = re.match(r"^([a-z][a-z0-9_-]*):\s*(.+)$", line.strip())
@@ -186,15 +197,28 @@ def parse_quota(stdout, stderr) -> dict:
     except ValueError:
         data = None
     if not isinstance(data, list):
-        return unknown(first_line(stderr) or "quota-cli gave no usable answer", QUOTA_RUNNERS)
+        return unknown(first_line(stderr) or "quota-cli gave no usable answer", RUNNERS)
     out: dict = {}
     for rec in data:
-        if isinstance(rec, dict) and rec.get("provider") in QUOTA_RUNNERS:
-            wins = [window(w.get("label"), w.get("remainingPercent"), w.get("resetAt"))
-                    for w in (rec.get("windows") or []) if isinstance(w, dict)]
-            out[rec["provider"]] = {"windows": wins, "problem": None if wins else str(rec.get("note") or "no windows reported")[:140]}
+        if not isinstance(rec, dict):
+            continue
+        provider = rec.get("provider")
+        raw = [w for w in (rec.get("windows") or []) if isinstance(w, dict)]
+        note = str(rec.get("note") or "no windows reported")[:140]
+        if provider in QUOTA_RUNNERS:
+            wins = [window(w.get("label"), w.get("remainingPercent"), w.get("resetAt")) for w in raw]
+            out[provider] = {"windows": wins, "problem": None if wins else note}
+        elif provider == "antigravity":
+            for r in AGY_RUNNERS:
+                out[r] = {"windows": [], "problem": note}
+            for w in raw:
+                split = agy_window(w.get("label"))
+                if split:
+                    out[split[0]]["windows"].append(window(split[1], w.get("remainingPercent"), w.get("resetAt")))
     for r in QUOTA_RUNNERS:
         out.setdefault(r, {"windows": [], "problem": errors.get(r) or "not reported"})
+    for r in AGY_RUNNERS:
+        out.setdefault(r, {"windows": [], "problem": errors.get("antigravity") or "not reported (quota-cli reads agy from 0.4.0)"})
     return out
 
 
@@ -205,19 +229,20 @@ def via_watch_script(watch: Path) -> dict:
 
 
 def via_quota_cli(cfg: dict) -> dict:
-    default = Path.home() / ".cargo" / "bin" / ("quota-cli.exe" if os.name == "nt" else "quota-cli")
-    exe = cfg.get("QUOTA_CLI") or shutil.which("quota-cli") or str(default)
+    name = "quota-cli.exe" if os.name == "nt" else "quota-cli"
+    defaults = [Path.home() / ".cargo" / "bin" / name, Path.home() / ".local" / "bin" / name]  # where install.sh puts it
+    exe = cfg.get("QUOTA_CLI") or shutil.which("quota-cli") or next((str(d) for d in defaults if d.is_file()), str(defaults[0]))
     if not (Path(exe).is_file() or shutil.which(exe)):
-        return unknown("quota-cli not found (cargo install quota-cli)", QUOTA_RUNNERS)
+        return unknown("quota-cli not found (run install.sh, or cargo install quota-cli)", RUNNERS)
     env = dict(os.environ)
     if os.name == "nt" and not env.get("XDG_CONFIG_HOME") and env.get("APPDATA"):
         env["XDG_CONFIG_HOME"] = env["APPDATA"]  # where the Cursor CLI keeps its login on Windows
     try:
         cp = run([exe, "usage", "--json"], QUOTA_TIMEOUT, env)
     except subprocess.TimeoutExpired:
-        return unknown("quota-cli timed out", QUOTA_RUNNERS)
+        return unknown("quota-cli timed out", RUNNERS)
     except OSError as exc:
-        return unknown(f"quota-cli would not start: {exc}", QUOTA_RUNNERS)
+        return unknown(f"quota-cli would not start: {exc}", RUNNERS)
     return parse_quota(cp.stdout, cp.stderr)
 
 
@@ -234,7 +259,8 @@ def collect_quota(cfg: dict) -> dict:
 
 
 # ----------------------------------------------------------------------------- Hermes, for agy
-def collect_agy(cfg: dict) -> dict:
+def collect_hermes(cfg: dict) -> dict:
+    """agy's two pools from Hermes, or {} when Hermes is not installed: it is optional."""
     if os.name == "nt":
         local = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
         default = Path(local) / "hermes" / "bin" / "hermes.exe"
@@ -242,7 +268,7 @@ def collect_agy(cfg: dict) -> dict:
         default = Path.home() / ".local" / "bin" / "hermes"
     exe = cfg.get("HERMES") or shutil.which("hermes") or str(default)
     if not (Path(exe).is_file() or shutil.which(exe)):
-        return unknown("Hermes not found", AGY_RUNNERS)
+        return {}
     try:
         cp = run([exe, "usage", "--provider", "antigravity-subscription-directsdk", "--json"], HERMES_TIMEOUT)
     except subprocess.TimeoutExpired:
@@ -269,6 +295,24 @@ def collect_agy(cfg: dict) -> dict:
         used = percent(w.get("used_percent"))
         runner = "agy-gemini" if m.group(1) == "Gemini" else "agy-claude"
         out[runner]["windows"].append(window(m.group(2), None if used is None else 100 - used, iso_epoch(w.get("resets_at"))))
+    return out
+
+
+def has_numbers(info) -> bool:
+    return any(w["left"] is not None for w in (info or {}).get("windows") or [])
+
+
+def merge(quota: dict, hermes: dict) -> dict:
+    """quota-cli's lines, with Hermes filling in an agy line that quota-cli could not read."""
+    out = dict(quota)
+    for r in AGY_RUNNERS:
+        if has_numbers(out.get(r)) or r not in hermes:
+            continue
+        if has_numbers(hermes[r]):
+            out[r] = hermes[r]
+        else:
+            problem = (out.get(r) or {}).get("problem") or "not reported"
+            out[r] = {"windows": [], "problem": f"{problem}; Hermes: {hermes[r].get('problem')}"}
     return out
 
 
@@ -315,9 +359,9 @@ def main() -> int:
         cfg = load_settings()
         low_pct = low_threshold(cfg)
         with ThreadPoolExecutor(max_workers=2) as pool:
-            quota = pool.submit(safe, collect_quota, cfg, QUOTA_RUNNERS)
-            agy = pool.submit(safe, collect_agy, cfg, AGY_RUNNERS)
-            results = {**quota.result(), **agy.result()}
+            quota = pool.submit(safe, collect_quota, cfg, RUNNERS)
+            hermes = pool.submit(safe, collect_hermes, cfg, AGY_RUNNERS)
+            results = merge(quota.result(), hermes.result())
     except Exception as exc:  # advisory only: whatever went wrong, say so and carry on
         low_pct = 10.0
         results = unknown(f"usage check failed: {type(exc).__name__}", RUNNERS)
