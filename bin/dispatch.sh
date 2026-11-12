@@ -31,7 +31,7 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=roster.sh
-. "$HERE/roster.sh"   # CURSOR and AGY: where the two runners live
+. "$HERE/roster.sh"   # CURSOR and AGY (where those runners live), CODEX_WORKER_EFFORT
 # shellcheck source=deadline.sh
 . "$HERE/deadline.sh"  # run_deadline: stops the whole process tree at the deadline
 TIMEOUT="${DISPATCH_TIMEOUT:-3600}"

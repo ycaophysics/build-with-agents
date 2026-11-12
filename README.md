@@ -75,11 +75,11 @@ Build files go in `~/.claude/plans/<slug>-build/`: a copy of the plan, `status.m
 |---|---|---|---|
 | Hard | Money, orders, accounts, state machines, concurrency, migrations: anything where a mistake loses money or data | Claude subagent, Opus 5.5 at high effort | agy Opus 5.5, then Cursor Opus 5.5, then agy Gemini 4 Carbon (medium), then Codex `gpt-6-astra` at `xhigh` |
 | Medium | Plumbing with real edge cases, tests that need thought, screens | Claude subagent, Opus 5.5 at high effort | agy Gemini 4 Carbon (medium), then Codex `gpt-6.1-sol` at `xhigh`, then Cursor Opus 5.5 |
-| Easy | Mechanical, fully specified changes such as renames, copy edits from given text, or a test from a given table | Claude subagent, Sonnet 5.5 at high effort | Cursor `cursor-grok-4.6-high-fast`, then agy Gemini 4 Hydrogen |
+| Easy | Mechanical, fully specified changes such as renames, copy edits from given text, or a test from a given table | Claude subagent, Sonnet 5.5 at high effort | Cursor `cursor-grok-4.6-high-fast`, then agy Gemini 4 Hydrogen, then Codex `gpt-6.1-sol` at `xhigh` |
 
-If the repo has `.claude/agents/opus-high.md`, hard and medium tasks use that agent. Codex is the last resort for a task of any size. A task that comes back partial or blocked gets one follow-up attempt, then moves up one size once; it never gets a third try at the same size. A hard task has no bigger size, so it moves up to Claude Fable 5.2 instead (Cursor's Fable 5.2 when Claude is out).
+If the repo has `.claude/agents/opus-high.md`, hard and medium tasks use that agent. Codex is on every list: GPT-6 Astra as the last fallback for hard tasks, GPT-6.1 Sol for medium and easy ones. A task that comes back partial or blocked gets one follow-up attempt, then moves up one size once; it never gets a third try at the same size. A hard task has no bigger size, so it moves up to Claude Fable 5.2 instead (Cursor's Fable 5.2 when Claude is out).
 
-Each fallback list uses one model per runner. When a runner is rate limited or nearly out of allowance, the lead marks the whole runner down, so a second model on the same runner would never be tried.
+No fallback list holds two models that draw on the same allowance. When an allowance is rate limited or nearly used up, the lead marks it down as a whole, so a second model on it would never be tried. agy's Claude and Gemini models have separate allowances, which is why agy can appear twice on the hard list; Cursor and Codex appear once per list.
 
 Every model ID is in [bin/roster.sh](bin/roster.sh) and in the roster table in SKILL.md. The lead never picks a model outside that list and never falls back to `auto`.
 

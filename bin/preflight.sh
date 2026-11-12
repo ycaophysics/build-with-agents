@@ -45,8 +45,12 @@ if command -v codex >/dev/null 2>&1; then
       # Codex has no command that lists models; the cache it keeps of them is the best check there is.
       cache="${CODEX_HOME:-$HOME/.codex}/models_cache.json"
       if [ -f "$cache" ]; then
+        rmiss=""; grep -qF "\"$CODEX_REVIEW_MODEL\"" "$cache" || rmiss=" $CODEX_REVIEW_MODEL"
         miss=""; for m in "$CODEX_WORKER_MODEL" "$CODEX_HARD_MODEL"; do grep -qF "\"$m\"" "$cache" || miss="$miss $m"; done
-        [ -n "$miss" ] && line="$line; WORKER MODEL NOT IN CODEX'S MODEL CACHE:$miss (route that seat to the next runner on its tier and tell the owner; never substitute)"
+        [ -n "$rmiss" ] && line="$line; REVIEW MODEL NOT IN CODEX'S MODEL CACHE:$rmiss (the Codex reviewer may be unavailable; do not replace it with another model)"
+        [ -n "$miss" ] && line="$line; WORKER MODEL NOT IN CODEX'S MODEL CACHE:$miss (skip that entry on its tier's list and tell the owner; never substitute)"
+      else
+        line="$line; models NOT CHECKED: Codex has no model cache yet"
       fi
       if [ -n "$LIVE" ]; then
         if echo "Reply with the single word READY." | run_deadline 300 codex exec - -s read-only -m "$CODEX_REVIEW_MODEL" \
@@ -73,7 +77,7 @@ if [ -e "$CURSOR" ]; then
     miss="$(listed "$T/cursor.txt" "$CURSOR_EASY_MODEL" "$CURSOR_OPUS_MODEL" "$CURSOR_FABLE_MODEL")"
     line="cursor : ok; review model $CURSOR_REVIEW_MODEL"
     [ -n "$rmiss" ] && line="$line; REVIEW MODEL NOT LISTED:$rmiss (the Cursor reviewer is unavailable; do not replace it with another model)"
-    [ -n "$miss" ] && line="$line; WORKER MODEL NOT LISTED:$miss (route that seat to the next runner on its tier and tell the owner; never substitute)"
+    [ -n "$miss" ] && line="$line; WORKER MODEL NOT LISTED:$miss (skip that entry on its tier's list and tell the owner; never substitute)"
     if [ -n "$LIVE" ]; then
       if run_deadline 300 "$CURSOR" -p --mode ask --model "$CURSOR_REVIEW_MODEL" --trust --output-format text \
            "Reply with the single word READY." >"$T/cursor-live.txt" 2>&1 && grep -qi ready "$T/cursor-live.txt"; then
@@ -98,7 +102,7 @@ if [ -e "$AGY" ]; then
     miss="$(listed "$T/agy.txt" "$AGY_OPUS_MODEL" "$AGY_CARBON_MODEL" "$AGY_EASY_MODEL")"
     line="agy    : ok, $(run_deadline 30 "$AGY" --version 2>/dev/null | head -1); review model $CARBON_REVIEW_MODEL"
     [ -n "$rmiss" ] && line="$line; REVIEW MODEL NOT LISTED:$rmiss (the Carbon reviewer is unavailable; do not replace it with another model)"
-    [ -n "$miss" ] && line="$line; WORKER MODEL NOT LISTED:$miss (route that seat to the next runner on its tier and tell the owner; never substitute)"
+    [ -n "$miss" ] && line="$line; WORKER MODEL NOT LISTED:$miss (skip that entry on its tier's list and tell the owner; never substitute)"
     if [ -n "$LIVE" ]; then
       mkdir -p "$T/agyws" && (cd "$T/agyws" && run_deadline 300 "$AGY" -p "Reply with the single word READY. Do not use any tools." \
            --model "$CARBON_REVIEW_MODEL" --sandbox --print-timeout 240s --output-format text) >"$T/agy-live.txt" 2>&1
