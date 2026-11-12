@@ -18,6 +18,37 @@ The skill only builds. If you ask it for a plan or a prompt, it gives you the pr
 
 Every rule the lead follows is in [SKILL.md](SKILL.md).
 
+## Requirements
+
+- Windows with Git Bash. The install script makes Windows directory junctions, and the scripts look for cursor-agent and agy under `%LOCALAPPDATA%`.
+- Claude Code.
+- Python 3, for the allowance check.
+- Optional: the Codex CLI, cursor-agent and agy as reviewers and outside workers; Node.js for the agy review guard; quota-cli and Hermes for the allowance check. A missing tool is reported, and the build goes on without it.
+
+## Install
+
+Claude Code reads `~/.claude/skills/build-with-agents` on its own. Clone the repo to that path:
+
+```
+git clone https://github.com/ycaophysics/build-with-agents.git ~/.claude/skills/build-with-agents
+```
+
+Codex, Cursor and agy need the installer. Run it from Git Bash:
+
+```
+bash ~/.claude/skills/build-with-agents/install.sh
+```
+
+Codex gets a directory junction at `~/.codex/skills/build-with-agents`, and Cursor gets one at `~/.cursor/skills/build-with-agents`, so an edit in the Claude Code folder shows up in both at once. agy skips linked folders, so the script copies the skill to `~/.gemini/config/skills/build-with-agents` instead. After you edit the skill, run the installer again or agy keeps the old copy.
+
+A tool that is not installed is skipped. If a tool is installed and only its `skills` folder is missing, the script creates that folder. It never changes the folder it installs from. Edit the skill in `~/.claude/skills/build-with-agents`, not in the other tools' folders.
+
+To remove it from Codex, Cursor and agy and keep the Claude Code copy:
+
+```
+bash ~/.claude/skills/build-with-agents/install.sh --remove
+```
+
 ## How a build runs
 
 1. Setup. The lead checks that nothing else is editing the repo, makes a branch and a worktree from the base branch, checks every runner's login, models and allowance, and runs the repo's tests once to record anything that already failed before the build started.
@@ -130,36 +161,6 @@ The report covers what now works (with screenshots for screen changes), every ch
 
 Every outside call has a deadline. On Windows, GNU `timeout` often stops only the wrapper and leaves agy, Node or Codex running. [bin/deadline.sh](bin/deadline.sh) stops the whole process tree instead, using `taskkill` under Git Bash and process groups elsewhere.
 
-## Requirements
-
-- Windows with Git Bash. The install script makes Windows directory junctions, and the scripts look for cursor-agent and agy under `%LOCALAPPDATA%`.
-- Claude Code.
-- Python 3, for the allowance check.
-- Optional: the Codex CLI, cursor-agent and agy as reviewers and outside workers; Node.js for the agy review guard; quota-cli and Hermes for the allowance check. A missing tool is reported, and the build goes on without it.
-
-## Install
-
-Claude Code reads `~/.claude/skills/build-with-agents` on its own. Clone the repo to that path:
-
-```
-git clone https://github.com/ycaophysics/build-with-agents.git ~/.claude/skills/build-with-agents
-```
-
-Codex, Cursor and agy need the installer. Run it from Git Bash:
-
-```
-bash ~/.claude/skills/build-with-agents/install.sh
-```
-
-Codex gets a directory junction at `~/.codex/skills/build-with-agents`, and Cursor gets one at `~/.cursor/skills/build-with-agents`, so an edit in the Claude Code folder shows up in both at once. agy skips linked folders, so the script copies the skill to `~/.gemini/config/skills/build-with-agents` instead. After you edit the skill, run the installer again or agy keeps the old copy.
-
-A tool that is not installed is skipped. If a tool is installed and only its `skills` folder is missing, the script creates that folder. It never changes the folder it installs from. Edit the skill in `~/.claude/skills/build-with-agents`, not in the other tools' folders.
-
-To remove it from Codex, Cursor and agy and keep the Claude Code copy:
-
-```
-bash ~/.claude/skills/build-with-agents/install.sh --remove
-```
 
 ## Sign-in and permissions
 
