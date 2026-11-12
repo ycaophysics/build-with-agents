@@ -86,7 +86,8 @@ remove_entry() {  # remove_entry <path>: a link is unlinked, a real copy is dele
   case "$kind" in
     none) return 0 ;;
     link*) out="$(unlink_path "$p")"; [ "$out" = ok ] || echo "  could not unlink $p: $out" >&2 ;;
-    *) rm -rf -- "$p" ;;
+    *) if [ "$p" -ef "$SRC" ]; then echo "  $p is the skill's own folder, so it was not deleted" >&2; return 1; fi
+       rm -rf -- "$p" ;;
   esac
   [ "$(probe "$p")" = none ]
 }
@@ -114,7 +115,7 @@ QUOTA_CLI_RELEASE="https://github.com/pinkpixel-dev/quota/releases/download/quot
 find_quota_cli() {  # the places usage.py looks, in its order: PATH, ~/.cargo/bin, ~/.local/bin
   local p
   for p in "$(command -v quota-cli 2>/dev/null)" "$HOME/.cargo/bin/quota-cli" "$HOME/.local/bin/quota-cli"; do
-    if [ -n "$p" ] && [ -x "$p" ]; then echo "$p"; return 0; fi
+    if [ -n "$p" ] && [ -f "$p" ] && [ -x "$p" ]; then echo "$p"; return 0; fi
   done
   return 1
 }
@@ -148,9 +149,13 @@ download_quota_cli() {
         *) tar -xzf "$tmp/$archive" -C "$tmp/x" ;;
       esac
       bin="$(find "$tmp/x" -type f \( -name quota-cli -o -name quota-cli.exe \) | head -1)"
-      if [ -n "$bin" ] && "$bin" --help >/dev/null 2>&1; then
+      # chmod first: unzip under Cygwin can leave the .exe without its execute bit.
+      if [ -n "$bin" ] && chmod +x "$bin" && "$bin" --help >/dev/null 2>&1; then
+        # Whatever is at the destination is removed first, so cp never writes through a link
+        # into the file it points to. A folder there is left alone, and the install fails.
         dest="$HOME/.local/bin/$(basename "$bin")"
-        mkdir -p "$HOME/.local/bin" && cp "$bin" "$dest" && chmod +x "$dest" && ok=yes
+        mkdir -p "$HOME/.local/bin" && rm -f -- "$dest" && [ ! -e "$dest" ] && [ ! -L "$dest" ] \
+          && cp "$bin" "$dest" && chmod +x "$dest" && ok=yes
       fi
     fi
   fi
@@ -158,10 +163,27 @@ download_quota_cli() {
   [ -n "$ok" ]
 }
 
+older_than_pinned() {  # older_than_pinned <version>: true when it sorts below QUOTA_CLI_VERSION
+  [ "$1" != "$QUOTA_CLI_VERSION" ] &&
+    [ "$(printf '%s\n%s\n' "$1" "$QUOTA_CLI_VERSION" | sort -t. -k1,1n -k2,2n -k3,3n | head -1)" = "$1" ]
+}
+
 install_quota_cli() {
-  local q pre cargo why="there is no prebuilt binary for $(uname -s) $(uname -m)"
-  if q="$(find_quota_cli)"; then echo "quota-cli: already installed at $q"; return; fi
-  if pre="$(prebuilt_quota_cli)"; then
+  local q pre have cargo why="there is no prebuilt binary for $(uname -s) $(uname -m)"
+  cargo="$(command -v cargo 2>/dev/null || echo "$HOME/.cargo/bin/cargo")"
+  if q="$(find_quota_cli)"; then
+    # Before 0.4.0 quota-cli cannot read agy. Only a copy cargo installed shows its version; an
+    # older one is rebuilt below (cargo replaces it). Any other copy is kept as it is.
+    have=""
+    if [ -x "$cargo" ]; then
+      have="$("$cargo" install --list 2>/dev/null | sed -n 's/^quota-cli v\([0-9.]*\):$/\1/p')"
+    fi
+    if [ -n "$have" ] && older_than_pinned "$have"; then
+      echo "quota-cli: cargo's copy is $have, which cannot read agy; upgrading it to $QUOTA_CLI_VERSION"
+    else
+      echo "quota-cli: already installed at $q"; return
+    fi
+  elif pre="$(prebuilt_quota_cli)"; then
     # shellcheck disable=SC2086  # "<archive> <sha256>" splits into the two arguments
     if download_quota_cli $pre && q="$(find_quota_cli)"; then
       echo "quota-cli: installed $QUOTA_CLI_VERSION at $q"; return
@@ -169,7 +191,6 @@ install_quota_cli() {
     why="the prebuilt binary did not install"
     echo "quota-cli: $why; trying cargo"
   fi
-  cargo="$(command -v cargo 2>/dev/null || echo "$HOME/.cargo/bin/cargo")"
   if [ ! -x "$cargo" ]; then
     fail quota-cli "$why, and there is no cargo. Install Rust from https://rustup.rs, then run this again"
     return
@@ -195,6 +216,12 @@ for tool in codex cursor agy; do
   # (A correct link at $dest also reaches the source, so only the parent folders are compared.)
   if [ "$dir" -ef "$(dirname "$SRC")" ]; then
     echo "$tool: skipped, $dir is the same folder as $(dirname "$SRC")"; continue
+  fi
+  # $dest can also reach the real skill without being a link itself: when ~/.claude/skills/<skill>
+  # links to a clone kept at $dest, or $dir links to the folder that holds that clone. Removing
+  # $dest would then delete the clone, so the tool is skipped: it already sees the skill.
+  if [ "$dest" -ef "$SRC" ] && [ "$(probe "$dest")" = dir ]; then
+    echo "$tool: skipped, $dest is the skill's own folder"; continue
   fi
   if [ "$MODE" = "--remove" ]; then
     if [ "$(probe "$dest")" = none ]; then echo "$tool: nothing to remove at $dest"

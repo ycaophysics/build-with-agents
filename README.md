@@ -44,7 +44,7 @@ Codex gets a link at `~/.codex/skills/build-with-agents`, and Cursor gets one at
 
 A tool that is not installed is skipped. If a tool is installed and only its `skills` folder is missing, the script creates that folder. It never changes the folder it installs from. Edit the skill in `~/.claude/skills/build-with-agents`, not in the other tools' folders.
 
-The installer also installs [quota-cli](https://github.com/pinkpixel-dev/quota) 0.4.0 for the allowance check, unless you already have it.
+The installer also installs [quota-cli](https://github.com/pinkpixel-dev/quota) 0.4.0 for the allowance check, unless you already have it. An older copy that cargo installed is upgraded, because quota-cli reads agy only from 0.4.0.
 
 - **Linux (x86_64) and Windows:** it downloads the prebuilt binary to `~/.local/bin`, after checking it against a SHA-256 hash pinned in the script.
 - **macOS, and other Linux machines:** there is no prebuilt binary, so it builds quota-cli with `cargo install`. This takes under a minute on a recent Mac and needs [Rust](https://rustup.rs) and a C compiler.
