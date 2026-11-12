@@ -12,11 +12,14 @@
 # Read-only, per reviewer:
 #   codex   sandbox read-only; Codex itself writes only the -o file.
 #   cursor  --mode plan, Cursor's read-only planning mode.
-#   carbon  agy on Gemini 4 Carbon (Argon is no longer used: owner, 2026-11-10). A PreToolUse
-#           guard in <checkout>/.agents/ refuses every write, web, MCP, subagent and shell tool
-#           (agy's headless mode ends the run with no output when a shell command needs a
-#           permission, and --dangerously-skip-permissions is refused by Claude Code's auto
-#           mode). It reads with its own file tools and logs each tool call to
+#   carbon  agy on Gemini 4 Carbon (Argon is no longer used: owner, 2026-11-10), with --sandbox.
+#           A PreToolUse guard refuses every write, web, MCP, subagent and shell tool (agy's
+#           headless mode ends the run with no output when a shell command needs a permission,
+#           and --dangerously-skip-permissions is refused by Claude Code's auto mode). The guard
+#           itself sits in a temp folder; agy reads hooks only from <checkout>/.agents/hooks.json,
+#           so that one file is written into the checkout, and only when the repository does not
+#           track it. If it does, the guard is not installed and the carbon line says so. Carbon
+#           reads with its own file tools, and the guard logs each tool call to
 #           <build>/logs/<m>-carbon-guard.log. The checkout is a throwaway, and any file changed
 #           anyway is reported on its line.
 #
@@ -26,6 +29,8 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=roster.sh
 . "$HERE/roster.sh"
+# shellcheck source=deadline.sh
+. "$HERE/deadline.sh"  # run_deadline: stops the whole process tree at the deadline
 TIMEOUT="${REVIEW_TIMEOUT:-2700}"
 # Carbon high is slow: a run stopped at 45 minutes lost its whole review; one given 90 finished
 # (2026-11-10). Its brief still asks for the report by minute 35; the rest is margin.
@@ -44,45 +49,72 @@ BRIEF="$BUILD/reviews/$M-brief.md"
 git -C "$CO" rev-parse --git-dir >/dev/null 2>&1 || { echo "$M NOCHECKOUT $CO is not a git checkout" >&2; exit 2; }
 mkdir -p "$BUILD/logs" "$BUILD/reviews"
 
-win() { cygpath -m "$1" 2>/dev/null || printf '%s' "$1"; }
+# Absolute C:/... paths, because the runners start in another folder.
+win() { cygpath -ma "$1" 2>/dev/null || printf '%s' "$1"; }
 CO_W="$(win "$CO")"; BUILD_W="$(win "$BUILD")"; BRIEF_W="$(win "$BRIEF")"
 ASK="Read ${BRIEF_W} and follow it exactly. Reply with the review report only."
 
-deadline() {  # deadline <seconds> <command...>
-  local t="$1"; shift
-  if command -v timeout >/dev/null 2>&1; then timeout --kill-after=60 "$t" "$@"; else "$@"; fi
-}
-
 run_codex() {
-  deadline "$TIMEOUT" codex exec - -s read-only -m "$CODEX_REVIEW_MODEL" \
+  run_deadline "$TIMEOUT" codex exec - -s read-only -m "$CODEX_REVIEW_MODEL" \
     -c "model_reasoning_effort=\"$CODEX_REVIEW_EFFORT\"" -C "$CO_W" \
     -o "$(win "$BUILD/reviews/$M-codex.md")" < "$BRIEF" > "$BUILD/logs/$M-codex.log" 2>&1
 }
 
 run_cursor() {
-  deadline "$TIMEOUT" "$CURSOR" -p --mode plan --model "$CURSOR_REVIEW_MODEL" --trust --workspace "$CO_W" \
+  run_deadline "$TIMEOUT" "$CURSOR" -p --mode plan --model "$CURSOR_REVIEW_MODEL" --trust --workspace "$CO_W" \
     --add-dir "$BUILD_W" --output-format text "$ASK" \
     > "$BUILD/reviews/$M-cursor.md" 2> "$BUILD/logs/$M-cursor.log"
 }
 
-run_carbon() {
-  # agy hands the hook command to Windows with its quotes intact, so no quotes and no spaces:
-  # the guard is copied next to hooks.json (the hook's working directory) and the log path must
-  # be space-free.
-  local glog; glog="$(win "$BUILD/logs/$M-carbon-guard.log")"
-  case "$glog" in *" "*) glog="guard.log" ;; esac
+# Carbon's guard is set up before any reviewer starts, and nothing the repository tracks is
+# written: the guard goes in a temp folder, and hooks.json goes into the checkout only when the
+# repository does not track it. CARBON_NOTE is added to the carbon line. HOOKS_MADE marks the one
+# file this script wrote into the checkout, the only file the changed-files check leaves out.
+CARBON_NOTE=""; HOOKS_MADE=""; GUARD_DIR=""; GUARD_LOG_TMP=""
+cleanup() {
+  if [ -n "$GUARD_LOG_TMP" ] && [ -s "$GUARD_LOG_TMP" ]; then
+    cp "$GUARD_LOG_TMP" "$BUILD/logs/$M-carbon-guard.log"
+  fi
+  if [ -n "$GUARD_DIR" ]; then rm -rf "$GUARD_DIR"; fi
+}
+trap cleanup EXIT
+
+setup_carbon_guard() {
+  if git -C "$CO" ls-files --error-unmatch -- .agents/hooks.json >/dev/null 2>&1; then
+    CARBON_NOTE=" WARNING guard not installed: the checkout tracks .agents/hooks.json, so carbon ran with --sandbox only"
+    return
+  fi
+  GUARD_DIR="$(mktemp -d)"
+  cp "$HERE/agy-readonly-guard.mjs" "$GUARD_DIR/guard.mjs"
+  # agy hands the hook command to Windows with its quotes intact, so the paths in it can have no
+  # quotes and no spaces.
+  local gpath glog
+  gpath="$(win "$GUARD_DIR/guard.mjs")"
+  case "$gpath" in *" "*) gpath="$(cygpath -d "$GUARD_DIR/guard.mjs" 2>/dev/null | tr '\\' '/')" ;; esac
+  case "$gpath" in ""|*" "*)
+    CARBON_NOTE=" WARNING guard not installed: its temp path has spaces, so carbon ran with --sandbox only"
+    return ;;
+  esac
+  glog="$(win "$BUILD/logs/$M-carbon-guard.log")"
+  case "$glog" in *" "*) GUARD_LOG_TMP="$GUARD_DIR/guard.log"; glog="$(win "$GUARD_LOG_TMP")" ;; esac
   mkdir -p "$CO/.agents"
-  cp "$HERE/agy-readonly-guard.mjs" "$CO/.agents/guard.mjs"
-  printf '{\n  "read-only-guard": {\n    "PreToolUse": [\n      {"matcher": "*", "hooks": [{"type": "command", "command": "node guard.mjs %s", "timeout": 10}]}\n    ]\n  }\n}\n' \
-    "$glog" > "$CO/.agents/hooks.json"
-  (cd "$CO" && deadline "$CARBON_TIMEOUT" "$AGY" -p "$ASK Shell commands are switched off for this review: use your file reading, listing and search tools." \
-    --model "$CARBON_REVIEW_MODEL" --sandbox --add-dir "$BUILD_W" --print-timeout "${CARBON_TIMEOUT}s" \
+  printf '{\n  "read-only-guard": {\n    "PreToolUse": [\n      {"matcher": "*", "hooks": [{"type": "command", "command": "node %s %s", "timeout": 10}]}\n    ]\n  }\n}\n' \
+    "$gpath" "$glog" > "$CO/.agents/hooks.json" && HOOKS_MADE=yes
+}
+
+run_carbon() {
+  # agy's own --print-timeout is two minutes past the outer deadline, so the deadline is what stops
+  # a slow run and its line says TIMEOUT, not FAIL rc=1.
+  (cd "$CO" && run_deadline "$CARBON_TIMEOUT" "$AGY" -p "$ASK Shell commands are switched off for this review: use your file reading, listing and search tools." \
+    --model "$CARBON_REVIEW_MODEL" --sandbox --add-dir "$BUILD_W" --print-timeout "$((CARBON_TIMEOUT + 120))s" \
     --output-format text) > "$BUILD/reviews/$M-carbon.md" 2> "$BUILD/logs/$M-carbon.log"
 }
 
 is_limited() {
-  tail -c 4000 "$1" 2>/dev/null | grep -qiE "rate.?limit|usage limit|session limit|resource[_ -]?exhausted|quota|too many requests|\b429\b|\b401\b|\b403\b|at capacity|overloaded|out of credits|unauthori[sz]ed|not authenticated|authentication required|not logged in"
+  tail -c 4000 "$1" 2>/dev/null | grep -qiE "rate.?limit|usage limit|session limit|resource[_ -]?exhausted|too many requests|\b429\b|at capacity|overloaded|out of credits|unauthori[sz]ed|not authenticated|authentication required|not logged in"
 }
+
+case " $REVIEWERS " in *" carbon "*) setup_carbon_guard ;; esac
 
 declare -A PID START
 for r in $REVIEWERS; do
@@ -103,20 +135,25 @@ for r in $REVIEWERS; do
   bytes=$(wc -c < "$out" 2>/dev/null || echo 0); bytes=$(echo "$bytes" | tr -d ' ')
   note=""
   if [ "$r" = carbon ]; then
-    changed=$(git -C "$CO" status --porcelain 2>/dev/null | grep -v ' \.agents/' | wc -l | tr -d ' ')
+    # Every change counts, tracked .agents/ files included; only the hooks.json this script wrote
+    # is left out.
+    changed=$(git -C "$CO" status --porcelain --untracked-files=all 2>/dev/null \
+      | { if [ -n "$HOOKS_MADE" ]; then grep -vxF '?? .agents/hooks.json'; else cat; fi; } | wc -l | tr -d ' ')
     [ "$changed" != 0 ] && note=" WARNING carbon changed $changed file(s) in the review checkout"
+    note="$note$CARBON_NOTE"
   fi
   if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
     echo "$M $r:$(model_of "$r") TIMEOUT $(timeout_of "$r")s $dur log=$log$note"
-  elif [ "$rc" -eq 0 ] && { [ "$bytes" -gt 200 ] || grep -qiE '^[[:space:]*#]*verdict' "$out" 2>/dev/null; }; then
-    # A clean review ("VERDICT: READY / BIG: none / SMALL: none") is about 50 bytes: it counts.
+  elif [ "$rc" -eq 0 ] && grep -qiE '^[[:space:]*#]*verdict' "$out" 2>/dev/null; then
+    # A finished review has a verdict line, whatever its length: a clean one ("VERDICT: READY /
+    # BIG: none / SMALL: none") is about 50 bytes, and a long refusal with no verdict is not one.
     echo "$M $r:$(model_of "$r") DONE $dur ${bytes} bytes file=$out$note"; any=1
   elif is_limited "$log" || is_limited "$out"; then
     echo "$M $r:$(model_of "$r") RATELIMITED $dur log=$log$note"
   elif [ "$rc" -ne 0 ]; then
     echo "$M $r:$(model_of "$r") FAIL rc=$rc $dur log=$log$note"
   else
-    echo "$M $r:$(model_of "$r") EMPTY ${bytes} bytes $dur log=$log$note"
+    echo "$M $r:$(model_of "$r") EMPTY ${bytes} bytes, no verdict line $dur log=$log$note"
   fi
 done
 [ "$any" -eq 1 ]

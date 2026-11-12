@@ -8,7 +8,7 @@ or failing makes its runners "unknown", never "low".
     claude, codex, cursor   quota-cli (`cargo install quota-cli`), which reads each CLI's stored login
                             read-only and never refreshes it
     agy-gemini, agy-claude  Hermes: `hermes usage --provider antigravity-subscription-directsdk --json`
-                            (agy-gemini is what Gemini Carbon and Flash use; agy-claude is the Claude
+                            (agy-gemini is what Gemini Carbon and Hydrogen use; agy-claude is the Claude
                             and GPT models agy offers)
 
 A runner is LOW when any of its windows has USAGE_LOW_PCT percent or less left.

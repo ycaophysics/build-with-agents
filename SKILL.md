@@ -3,7 +3,7 @@ name: build-with-agents
 description: |
   Run an implementation build the owner's way: this session leads, bounded workers write the code
   in a worktree (Claude subagents by default; Cursor, Antigravity agy (Opus, Gemini 4 Carbon,
-  Flash) and Codex when allowed, named by the owner, or when Claude is out), and Codex, Cursor
+  Gemini 4 Hydrogen) and Codex when allowed, named by the owner, or when Claude is out), and Codex, Cursor
   and agy Gemini 4 Carbon review each milestone read-only at the same time. It checks how much
   allowance each runner has left and routes work around one that is nearly out. It runs from setup
   to the final report without stopping to wait for the owner.
@@ -62,7 +62,7 @@ the plan (and any notes). `<SKILL>` below means this skill's folder,
 | Worker, hard and medium tasks | Claude subagent | the repo's `opus-high` agent if `.claude/agents/opus-high.md` exists; else `general-purpose` with `model: "opus"`, `effort: "high"` | Agent tool |
 | Worker, easy tasks | Claude subagent | Sonnet 5.5: `general-purpose` with `model: "sonnet"`, `effort: "high"` | Agent tool |
 | Worker, easy when Claude Code is out | cursor-agent | `cursor-grok-4.6-high-fast` | `dispatch.sh` (outside workers must be allowed) |
-| Worker, easy second fallback | agy | `gemini-3.8-flash-high` | `dispatch.sh` (allowed) |
+| Worker, easy second fallback | agy | `gemini-4-hydrogen-high` | `dispatch.sh` (allowed) |
 | Worker, medium when Claude Code is out | agy | `gemini-4-carbon-medium` (high is too slow for work) | `dispatch.sh` (allowed) |
 | Worker, medium second fallback; last resort for any task | codex | `gpt-6.1-sol` | `dispatch.sh` (allowed) |
 | Worker, medium third fallback | cursor-agent | `gpt-5.6-sol-xhigh` | `dispatch.sh` (allowed) |
@@ -98,7 +98,7 @@ deadline), only reads, writes nothing, and never stops a build.
 | `claude` | the lead and every Claude subagent |
 | `codex` | the Codex reviewer and Codex as a worker |
 | `cursor` | the Cursor reviewer and every Cursor worker |
-| `agy-gemini` | agy Carbon (worker and reviewer) and agy Gemini Flash |
+| `agy-gemini` | agy Carbon (worker and reviewer) and agy Gemini 4 Hydrogen |
 | `agy-claude` | agy Opus |
 
 A line is `LOW` when any window has 10% or less left, `unknown` when it could not be read (a tool
@@ -155,7 +155,7 @@ branch (`main` or `master`, whichever exists).
     (outside: agy Carbon medium, then codex, then Cursor `gpt-5.6-sol-xhigh`).
   - **easy**: mechanical and fully specified (copy edits from given text, renames, a constant, a
     test from a given table). Claude subagent on Sonnet 5.5 at high effort (outside, only when
-    Claude is out: Cursor grok, then agy Gemini Flash).
+    Claude is out: Cursor grok, then agy Gemini 4 Hydrogen).
 - Write the milestones and tasks into `status.md` before the first dispatch. Smallest build that
   meets the plan: no extra features, refactors or extra review rounds.
 
@@ -182,8 +182,11 @@ branch (`main` or `master`, whichever exists).
   git index. Run workers in parallel only for tasks that touch disjoint files, at most three at
   once, each in its own worktree that you make from the build branch head
   (`git -C <worktree> worktree add <path> -b <task-branch> HEAD`); bring each back with
-  `git -C <worktree> cherry-pick <head>..<task-branch>` and remove its worktree. (The Agent tool's
-  own worktree option starts from the main checkout's HEAD, not the build branch.)
+  `git -C <worktree> cherry-pick <head>..<task-branch>` and remove its worktree. If the
+  cherry-pick stops on a conflict, run `git -C <worktree> cherry-pick --abort` so the build
+  worktree is not left in the middle of one, record that task as not merged in `status.md`, and
+  carry on with the build. (The Agent tool's own worktree option starts from the main checkout's
+  HEAD, not the build branch.)
 - **Check every claim yourself** after each worker: `git -C <worktree> log` and `show --stat` for
   its commits, rerun the tests it says passed, and confirm the main checkout is still clean and
   `<base>` has not moved. A worker exiting cleanly proves nothing.
@@ -193,7 +196,7 @@ branch (`main` or `master`, whichever exists).
 
 ## 5. Milestone review
 
-1. **Full checks** at the milestone head: the repo's whole test suite (Python always `-n auto`),
+1. **Full checks** at the milestone head: the repo's whole test suite (pytest as section 7 says),
    frontend tests and build, doc checks. Record exit codes and counts.
 2. **Pin**: record the head as `<pin>` in `status.md`, then make a detached, throwaway checkout:
    `git -C <worktree> worktree add <repos folder>/<repo-short>-review-m<N> <pin> --detach`
@@ -225,7 +228,7 @@ branch (`main` or `master`, whichever exists).
    others and write down what it did not read. Never write a review in its place and never swap in
    another model.
 9. **Remove the review checkout**: `git -C <worktree> worktree remove --force <review checkout>`
-   (`--force` because agy's guard leaves an untracked `.agents/` folder in it).
+   (`--force` because agy's guard leaves an untracked `.agents/hooks.json` in it).
 10. **Tell the owner in three lines**: what now works, a screenshot or before/after when the
     milestone is visible, and what comes next. Start the next milestone's work in the same turn;
     never wait for a reply.
@@ -256,7 +259,10 @@ Nothing here pauses the build (rule 4). Each goes into `status.md` and the final
 - Commit each logical step as it goes green, not a whole milestone at once. Every commit message
   ends with a `Co-Authored-By:` line naming the model that actually did that work.
 - Never push, merge, rebase onto `<base>`, open a PR or deploy unless the owner says so.
-- Python test suites always run in parallel with `-n auto`; never serially.
+- Tests run with the command the repo's `CLAUDE.md` and `AGENTS.md` name; that command wins. When
+  it is pytest and pytest-xdist is installed, add `-n auto`. If `-n` is rejected, record it in
+  `status.md` and run the repo's command without `-n`; that alone does not fail the build. The
+  worker template says the same.
 - Owner-facing words are plain English: what a person sees and can do. No "gate", no invented
   shorthand, no internal codes on screen.
 - Docs are edited in place; obsolete text is deleted, not corrected below.
@@ -272,7 +278,9 @@ First, in this order (the owner's rule for every worktree):
   `git worktree list` that it is gone and that its folder is gone from disk (`git worktree remove`
   can leave `node_modules` behind).
 - Switch the main checkout to the build branch, so he can run the work from the folder he already
-  uses. If the main checkout has uncommitted work, leave it where it is and say so.
+  uses. If the main checkout has uncommitted work, leave it where it is and say so. A clean tree is
+  not enough: if a python, node, codex, cursor-agent, agy or claude process has a command line that
+  names the main checkout, also leave it on its current branch and say so.
 
 Then the report:
 
@@ -312,9 +320,10 @@ The roster's lead seat is Codex `gpt-6-astra`; Cursor or agy may lead the same w
 starts one with this skill. A lead without Claude Code's Agent tool sends every worker through
 `dispatch.sh` (Codex launched with `-s danger-full-access` may run it): hard to
 `claude claude-opus-5-5` (on `RATELIMITED`: `agy claude-opus-5-5-high`, then
-`cursor claude-opus-5-thinking-high`), medium to `agy gemini-4-carbon-medium` (then
-`codex gpt-6.1-sol`, then `cursor gpt-5.6-sol-xhigh`), easy to `claude claude-sonnet-5-5` (on
-`RATELIMITED`: `cursor cursor-grok-4.6-high-fast`, then `agy gemini-3.8-flash-high`). A `LOW`
+`cursor claude-opus-5-thinking-high`), medium to `claude claude-opus-5-5` first (on
+`RATELIMITED`, or when the latest `usage.py` line for `claude` is `LOW`:
+`agy gemini-4-carbon-medium`, then `codex gpt-6.1-sol`, then `cursor gpt-5.6-sol-xhigh`), easy to `claude claude-sonnet-5-5` (on
+`RATELIMITED`: `cursor cursor-grok-4.6-high-fast`, then `agy gemini-4-hydrogen-high`). A `LOW`
 line from `usage.py` counts as `RATELIMITED` in every chain here. Reviews still run through
 `review.sh`. Codex is a one-shot process: a question printed to the screen
 reaches nobody, so it follows rule 4 and section 6 the same way (a lead's choice in `status.md`)

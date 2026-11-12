@@ -14,6 +14,14 @@ CODEX_REVIEW_EFFORT="${CODEX_REVIEW_EFFORT:-xhigh}"
 CURSOR_REVIEW_MODEL="${CURSOR_REVIEW_MODEL:-grok-4.7-xhigh}"   # owner's Cursor review choice
 CARBON_REVIEW_MODEL="${CARBON_REVIEW_MODEL:-gemini-4-carbon-high}"    # agy's reviewer; high for reviews, medium for work; Argon no longer used (owner, 2026-11-10)
 
+# An override of "auto", or of a model with "astra" in its name (any case), is ignored and the
+# default above is kept. Other overrides stand.
+_never_a_reviewer() { case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in auto|*astra*) return 0 ;; esac; return 1; }
+if _never_a_reviewer "$CODEX_REVIEW_MODEL"; then CODEX_REVIEW_MODEL="gpt-6.1-sol"; fi
+if _never_a_reviewer "$CURSOR_REVIEW_MODEL"; then CURSOR_REVIEW_MODEL="grok-4.7-xhigh"; fi
+if _never_a_reviewer "$CARBON_REVIEW_MODEL"; then CARBON_REVIEW_MODEL="gemini-4-carbon-high"; fi
+if [ "$(printf '%s' "$CODEX_REVIEW_EFFORT" | tr '[:upper:]' '[:lower:]')" = auto ]; then CODEX_REVIEW_EFFORT="xhigh"; fi
+
 # Workers.
 CLAUDE_WORKER_MODEL="claude-opus-5-5"            # Claude subagent (opus-high), effort high
 CLAUDE_EASY_MODEL="claude-sonnet-5-5"            # Claude subagent for easy tasks, effort high
@@ -22,5 +30,5 @@ CURSOR_OPUS_MODEL="claude-opus-5-thinking-high"  # Opus 5 on Cursor's key and en
 AGY_CARBON_MODEL="gemini-4-carbon-medium"        # medium tasks when Claude is out: first choice
 CURSOR_MEDIUM_MODEL="gpt-5.6-sol-xhigh"          # medium: third choice, after Carbon and codex
 CURSOR_EASY_MODEL="cursor-grok-4.6-high-fast"
-AGY_EASY_MODEL="gemini-3.8-flash-high"
+AGY_EASY_MODEL="gemini-4-hydrogen-high"   # easy second fallback; Hydrogen replaced Flash (owner, 2026-11-12)
 CODEX_WORKER_MODEL="gpt-6.1-sol"

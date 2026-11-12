@@ -10,6 +10,10 @@
 #   bash ~/.claude/skills/build-with-agents/install.sh            install, or refresh agy's copy
 #   bash ~/.claude/skills/build-with-agents/install.sh --remove   take it out of those three tools
 #
+# A tool whose own folder (~/.codex, ~/.cursor, ~/.gemini/config) is missing is skipped; when only
+# its skills folder is missing, that folder is made. The exit code is 1 when any tool failed, even
+# if a later one worked.
+#
 # Claude Code needs nothing: it reads ~/.claude/skills directly. The source folder is never
 # deleted or changed by this script.
 
@@ -19,25 +23,52 @@ SRC="$HOME/.claude/skills/$NAME"
 [ -f "$SRC/SKILL.md" ] || { echo "no skill at $SRC" >&2; exit 2; }
 
 win() { cygpath -w "$1"; }
-link_type() { powershell.exe -NoProfile -Command "(Get-Item -LiteralPath '$(win "$1")' -Force).LinkType" 2>/dev/null | tr -d '\r'; }
-make_junction() { powershell.exe -NoProfile -Command "New-Item -ItemType Junction -Path '$(win "$1")' -Target '$(win "$SRC")' | Out-Null"; }
-# Removes only the link itself. A recursive delete through a junction would empty the source.
-drop_junction() { powershell.exe -NoProfile -Command "[System.IO.Directory]::Delete('$(win "$1")', \$false)"; }
+psq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"; }   # a PowerShell string literal
+pwsh() { powershell.exe -NoProfile -NonInteractive -Command "$1" 2>/dev/null | tr -d '\r'; }
 
-remove_entry() {  # remove_entry <path>: a junction is unlinked, a real copy is deleted
-  local p="$1"
-  [ -e "$p" ] || return 0
-  if [ "$(link_type "$p")" = "Junction" ]; then drop_junction "$p"
-  else rm -rf -- "$p"; fi
+# probe <path> prints "none", "dir", "file", or "link <LinkType>". It looks at the path itself and
+# never follows a link, so a broken junction (its target was moved, and [ -e ] is false for it)
+# still shows as a link.
+probe() {
+  pwsh "\$p = $(psq "$(win "$1")"); try { \$a = [System.IO.File]::GetAttributes(\$p) } catch { 'none'; exit 0 }; if (\$a -band [System.IO.FileAttributes]::ReparsePoint) { 'link ' + (Get-Item -LiteralPath \$p -Force -ErrorAction SilentlyContinue).LinkType } elseif (\$a -band [System.IO.FileAttributes]::Directory) { 'dir' } else { 'file' }"
+}
+
+# Removes only the link itself, never what it points to: a recursive delete through a junction
+# would empty the source.
+unlink_path() {
+  pwsh "\$p = $(psq "$(win "$1")"); try { if ([System.IO.File]::GetAttributes(\$p) -band [System.IO.FileAttributes]::Directory) { [System.IO.Directory]::Delete(\$p, \$false) } else { [System.IO.File]::Delete(\$p) }; 'ok' } catch { 'failed: ' + \$_.Exception.Message }"
+}
+
+make_junction() {
+  pwsh "try { New-Item -ItemType Junction -Path $(psq "$(win "$1")") -Target $(psq "$(win "$SRC")") -ErrorAction Stop | Out-Null; 'ok' } catch { 'failed: ' + \$_.Exception.Message }"
+}
+
+remove_entry() {  # remove_entry <path>: a link is unlinked, a real copy is deleted; 1 if it is still there
+  local p="$1" kind out
+  kind="$(probe "$p")"
+  case "$kind" in
+    none) return 0 ;;
+    link*) out="$(unlink_path "$p")"; [ "$out" = ok ] || echo "  could not unlink $p: $out" >&2 ;;
+    *) rm -rf -- "$p" ;;
+  esac
+  [ "$(probe "$p")" = none ]
+}
+
+linked_here() {  # linked_here <path>: a junction that reaches this skill's source
+  [ "$(probe "$1")" = "link Junction" ] && [ "$1" -ef "$SRC" ]
 }
 
 MODE="${1:-install}"
+FAILED=""
+fail() { echo "$1: FAILED, $2" >&2; FAILED="$FAILED $1"; }
+
 for tool in codex cursor agy; do
   case "$tool" in
-    codex)  dir="$HOME/.codex/skills" ;;
-    cursor) dir="$HOME/.cursor/skills" ;;
-    agy)    dir="$HOME/.gemini/config/skills" ;;
+    codex)  conf="$HOME/.codex" ;;
+    cursor) conf="$HOME/.cursor" ;;
+    agy)    conf="$HOME/.gemini/config" ;;
   esac
+  dir="$conf/skills"
   dest="$dir/$NAME"
   # If $dir is itself a link to ~/.claude/skills, then $dest IS the source, and removing it would
   # delete the real skill (tested 2026-11-11). `-ef` is true when both names reach the same folder.
@@ -46,15 +77,37 @@ for tool in codex cursor agy; do
     echo "$tool: skipped, $dir is the same folder as $(dirname "$SRC")"; continue
   fi
   if [ "$MODE" = "--remove" ]; then
-    remove_entry "$dest"; echo "$tool: removed $dest"; continue
+    if [ "$(probe "$dest")" = none ]; then echo "$tool: nothing to remove at $dest"
+    elif remove_entry "$dest"; then echo "$tool: removed $dest"
+    else fail "$tool" "could not remove $dest"; fi
+    continue
   fi
-  if [ ! -d "$dir" ]; then echo "$tool: skipped, $dir does not exist (is $tool installed?)"; continue; fi
+  if [ ! -d "$conf" ]; then echo "$tool: skipped, $conf does not exist (is $tool installed?)"; continue; fi
+  if [ ! -d "$dir" ]; then
+    mkdir -p "$dir" || { fail "$tool" "could not make $dir"; continue; }
+    echo "$tool: made $dir"
+  fi
   if [ "$tool" = agy ]; then
-    remove_entry "$dest"; cp -r "$SRC" "$dest" && rm -rf -- "$dest/.git" \
-      && echo "agy: copied to $dest (rerun after editing the skill)"
-  elif [ "$(link_type "$dest")" = "Junction" ]; then
+    remove_entry "$dest" || { fail "$tool" "could not remove the old $dest"; continue; }
+    if cp -r "$SRC" "$dest" && rm -rf -- "$dest/.git" && [ -f "$dest/SKILL.md" ]; then
+      echo "agy: copied to $dest (rerun after editing the skill)"
+    else
+      fail "$tool" "could not copy the skill to $dest"
+    fi
+  elif linked_here "$dest"; then
     echo "$tool: already linked at $dest"
   else
-    remove_entry "$dest"; make_junction "$dest" && echo "$tool: linked $dest -> $SRC"
+    remove_entry "$dest" || { fail "$tool" "could not remove the old $dest"; continue; }
+    out="$(make_junction "$dest")"
+    if [ "$out" = ok ] && linked_here "$dest"; then
+      echo "$tool: linked $dest -> $SRC"
+    else
+      fail "$tool" "could not link $dest -> $SRC ($out)"
+    fi
   fi
 done
+
+if [ -n "$FAILED" ]; then
+  echo "failed for:$FAILED" >&2
+  exit 1
+fi

@@ -16,8 +16,9 @@
 # The full transcript goes to <build>/logs/<task>-<stamp>.log and is never read whole.
 #
 # Exit codes:
-#   0   PASS        the worker finished and its own verification passed
-#   1   FAIL        runner error, VERIFYFAIL, NOVERDICT, or EMPTY
+#   0   PASS        the runner exited 0, the verdict file says PASS, and the report is written
+#   1   FAIL        runner error, VERIFYFAIL, NOVERDICT, EMPTY, or a PASS verdict without a
+#                   clean exit or without a report
 #   86  RATELIMITED rate limited, out of credit, or logged out: reroute, do not wait
 #   87  TIMEOUT     hung and killed at the deadline (DISPATCH_TIMEOUT, default 3600 s)
 #   2   usage, missing file, or the task is already running (lock)
@@ -31,6 +32,8 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=roster.sh
 . "$HERE/roster.sh"   # CURSOR and AGY: where the two runners live
+# shellcheck source=deadline.sh
+. "$HERE/deadline.sh"  # run_deadline: stops the whole process tree at the deadline
 TIMEOUT="${DISPATCH_TIMEOUT:-3600}"
 CLAUDE_EFFORT="${DISPATCH_EFFORT:-high}"
 
@@ -62,8 +65,9 @@ VERDICT="$BUILD/logs/$TASK.verdict"
 REPORT="$BUILD/reports/$TASK.md"
 rm -f "$VERDICT" "$REPORT"
 
-# Windows programs get C:/... paths (forward slashes work in every runner and need no escaping).
-win() { cygpath -m "$1" 2>/dev/null || printf '%s' "$1"; }
+# Windows programs get absolute C:/... paths (forward slashes work in every runner and need no
+# escaping; absolute, because the runners start in another folder).
+win() { cygpath -ma "$1" 2>/dev/null || printf '%s' "$1"; }
 WT_W="$(win "$WT")"; BUILD_W="$(win "$BUILD")"; BRIEF_W="$(win "$BRIEF")"
 VERDICT_W="$(win "$VERDICT")"; REPORT_W="$(win "$REPORT")"
 
@@ -81,13 +85,7 @@ PROMPT_FILE="$BUILD/logs/$TASK.prompt.md"
 printf '%s\n' "$PROMPT" > "$PROMPT_FILE"
 PROMPT_ONE_LINE="Read $(win "$PROMPT_FILE") and follow it exactly."
 
-run_with_deadline() {
-  if command -v timeout >/dev/null 2>&1; then
-    timeout --kill-after=60 "$TIMEOUT" "$@"
-  else
-    "$@"
-  fi
-}
+run_with_deadline() { run_deadline "$TIMEOUT" "$@"; }
 
 start=$(date +%s)
 case "$RUNNER" in
@@ -111,9 +109,11 @@ dur=$(printf '%02d:%02d:%02d' $((elapsed/3600)) $((elapsed%3600/60)) $((elapsed%
 WHO="$RUNNER:$MODEL"
 
 # Only the end of the log is searched, and only when the run did not hand back a verdict: a brief
-# that quotes the words "rate limit" once made a finished task look rate limited.
+# that quotes the words "rate limit" once made a finished task look rate limited. Broad words that
+# also turn up in ordinary crashes (quota, insufficient, a bare 401 or 403, "resets at") are not
+# matched.
 is_rate_limited() {
-  tail -c 4000 "$1" 2>/dev/null | grep -qiE "rate.?limit|usage limit|session limit|hit your limit|spend(ing)? limit|resource[_ -]?exhausted|quota|too many requests|\b429\b|\b401\b|\b403\b|resets? (at|in|[0-9])|try again (later|in)|overloaded|at capacity|insufficient|out of credits|unauthori[sz]ed|not authenticated|authentication required|not logged in|log ?in required"
+  tail -c 4000 "$1" 2>/dev/null | grep -qiE "rate.?limit|usage limit|session limit|hit your limit|spend(ing)? limit|resource[_ -]?exhausted|too many requests|\b429\b|try again (later|in)|overloaded|at capacity|out of credits|unauthori[sz]ed|not authenticated|authentication required|not logged in|log ?in required"
 }
 
 if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
@@ -127,8 +127,14 @@ if [ ! -f "$VERDICT" ]; then
 fi
 
 v="$(tr -d '[:space:]' < "$VERDICT" | tr '[:lower:]' '[:upper:]')"
-[ -f "$REPORT" ] || REPORT="(no report written)"
 if [ "$v" = "PASS" ]; then
+  # PASS counts only with a clean exit and a written report.
+  if [ "$rc" -ne 0 ]; then
+    echo "$TASK $WHO FAIL rc=$rc verdict says PASS but the runner exited with an error $dur log=$LOG"; exit 1
+  fi
+  if [ ! -s "$REPORT" ]; then
+    echo "$TASK $WHO FAIL verdict says PASS but the report $REPORT is missing or empty $dur log=$LOG"; exit 1
+  fi
   echo "$TASK $WHO PASS $dur report=$REPORT"; exit 0
 fi
 echo "$TASK $WHO VERIFYFAIL verdict=$v $dur report=$REPORT"; exit 1
