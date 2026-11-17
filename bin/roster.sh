@@ -58,10 +58,10 @@ CURSOR_EASY_MODEL="cursor-grok-4.6-high-fast"    # easy: 1st fallback
 AGY_EASY_MODEL="gemini-4-hydrogen-high"   # easy: 2nd fallback; Hydrogen replaced Flash (owner, 2026-11-12)
 
 # Local models: Ollama, LM Studio and Lemonade, each driven by a harness (LOCAL_HARNESS): Codex CLI
-# against the server's OpenAI-compatible Responses endpoint, or Qwen Code against its Chat
-# Completions endpoint. Off unless the owner turns them on (LOCAL_WORKERS=on), and only for easy
-# tasks: dispatch.sh refuses a local runner for a brief whose tier is not easy. The owner names
-# each model; a runner with no model set is left out. Each setting comes from the environment
+# against the server's OpenAI-compatible Responses endpoint, or Qwen Code or OpenCode against its
+# Chat Completions endpoint. Off unless the owner turns them on (LOCAL_WORKERS=on), and only for
+# easy tasks: dispatch.sh refuses a local runner for a brief whose tier is not easy. The owner
+# names each model; a runner with no model set is left out. Each setting comes from the environment
 # first, then from local.env next to SKILL.md (git ignores it), then the default.
 ROSTER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _local_env() {  # _local_env KEY -> its value in local.env (UTF-8, or the UTF-16 PowerShell writes)
@@ -77,7 +77,7 @@ _setting() {  # _setting KEY DEFAULT
   printf '%s' "${v:-$2}"
 }
 LOCAL_WORKERS="$(_setting LOCAL_WORKERS off)"
-LOCAL_HARNESS="$(_setting LOCAL_HARNESS codex | tr '[:upper:]' '[:lower:]')"  # codex or qwen, for every server
+LOCAL_HARNESS="$(_setting LOCAL_HARNESS codex | tr '[:upper:]' '[:lower:]')"  # codex, qwen or opencode, for every server
 OLLAMA_MODEL="$(_setting OLLAMA_MODEL "")"        # for example qwen3.8:27b
 LMSTUDIO_MODEL="$(_setting LMSTUDIO_MODEL "")"
 LEMONADE_MODEL="$(_setting LEMONADE_MODEL "")"
@@ -86,7 +86,7 @@ LMSTUDIO_URL="$(_setting LMSTUDIO_URL http://localhost:1234/v1)"  # LM Studio's 
 LEMONADE_URL="$(_setting LEMONADE_URL http://localhost:13305/api/v1)"  # Lemonade's default; check with: lemonade status
 LOCAL_RUNNERS="ollama lmstudio lemonade"          # the order a task tries them in
 local_on() { case "$(printf '%s' "$LOCAL_WORKERS" | tr '[:upper:]' '[:lower:]')" in on|yes|true|1) return 0 ;; esac; return 1; }
-local_harness_ok() { case "$LOCAL_HARNESS" in codex|qwen) return 0 ;; esac; return 1; }
+local_harness_ok() { case "$LOCAL_HARNESS" in codex|qwen|opencode) return 0 ;; esac; return 1; }
 local_url() {  # local_url <ollama|lmstudio|lemonade>
   case "$1" in ollama) echo "$OLLAMA_URL" ;; lmstudio) echo "$LMSTUDIO_URL" ;; lemonade) echo "$LEMONADE_URL" ;; esac
 }

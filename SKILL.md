@@ -71,7 +71,7 @@ the plan (and any notes). `<SKILL>` below means this skill's folder,
 | Worker, a hard task's step up when Claude Code is out | cursor-agent | `claude-fable-5-2-high` | `dispatch.sh` (allowed) |
 | Worker, easy when Claude Code is out | cursor-agent | `cursor-grok-4.6-high-fast` | `dispatch.sh` (allowed) |
 | Worker, easy second fallback | agy | `gemini-4-hydrogen-high` | `dispatch.sh` (allowed) |
-| Worker, easy only, tried first when the owner turns local models on | ollama, lmstudio or lemonade (a local server, driven by codex or qwen: `LOCAL_HARNESS`) | the model the owner names: `OLLAMA_MODEL`, `LMSTUDIO_MODEL`, `LEMONADE_MODEL` | `dispatch.sh` (allowed) |
+| Worker, easy only, tried first when the owner turns local models on | ollama, lmstudio or lemonade (a local server, driven by codex, qwen or opencode: `LOCAL_HARNESS`) | the model the owner names: `OLLAMA_MODEL`, `LMSTUDIO_MODEL`, `LEMONADE_MODEL` | `dispatch.sh` (allowed) |
 | Reviewer | codex | `gpt-6.1-sol`, reasoning `xhigh`, read-only. **Never astra.** | `review.sh` |
 | Reviewer | cursor-agent | `grok-4.7-xhigh`, plan mode (read-only) | `review.sh` |
 | Reviewer | agy | `gemini-4-carbon-high`, behind a read-only guard. **Never Argon** (Carbon is better: owner, 2026-11-10). | `review.sh` |
@@ -104,8 +104,9 @@ or the owner's own words in this conversation ("use local models"), in which cas
 `LOCAL_WORKERS=on` in the environment of each `dispatch.sh` call. The owner also names the model
 for each server (`OLLAMA_MODEL`, `LMSTUDIO_MODEL`, `LEMONADE_MODEL`); a server without one is not
 used, and you never pick one. Server addresses default to `OLLAMA_URL`, `LMSTUDIO_URL` and
-`LEMONADE_URL` in `roster.sh`. `LOCAL_HARNESS` (`codex`, the default, or `qwen` for Qwen Code) is
-the program that drives every local model; that too is the owner's setting, never yours. They go
+`LEMONADE_URL` in `roster.sh`. `LOCAL_HARNESS` (`codex`, the default, `qwen` for Qwen Code, or
+`opencode` for OpenCode) is the program that drives every local model; that too is the owner's
+setting, never yours. They go
 through `dispatch.sh`, so the permission rule above applies.
 - **Easy tasks only**, never medium or hard, and never a review or a repair of a review finding.
   `dispatch.sh` refuses a brief without a `Tier: easy` line.
