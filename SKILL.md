@@ -71,6 +71,7 @@ the plan (and any notes). `<SKILL>` below means this skill's folder,
 | Worker, a hard task's step up when Claude Code is out | cursor-agent | `claude-fable-5-2-high` | `dispatch.sh` (allowed) |
 | Worker, easy when Claude Code is out | cursor-agent | `cursor-grok-4.6-high-fast` | `dispatch.sh` (allowed) |
 | Worker, easy second fallback | agy | `gemini-4-hydrogen-high` | `dispatch.sh` (allowed) |
+| Worker, easy only, tried first when the owner turns local models on | ollama, lmstudio or lemonade (a local server, driven through codex) | the model the owner names: `OLLAMA_MODEL`, `LMSTUDIO_MODEL`, `LEMONADE_MODEL` | `dispatch.sh` (allowed) |
 | Reviewer | codex | `gpt-6.1-sol`, reasoning `xhigh`, read-only. **Never astra.** | `review.sh` |
 | Reviewer | cursor-agent | `grok-4.7-xhigh`, plan mode (read-only) | `review.sh` |
 | Reviewer | agy | `gemini-4-carbon-high`, behind a read-only guard. **Never Argon** (Carbon is better: owner, 2026-11-10). | `review.sh` |
@@ -96,6 +97,22 @@ has added a permission rule for `<SKILL>/bin/dispatch.sh`. Look for one in
 `~/.claude/settings.json` and the repo's `.claude/settings*.json`. Without it, every task goes to
 a Claude subagent; do not try an outside worker, and never work around a refusal. Reviews are
 read-only and need no rule.
+
+**Local models** (Ollama, LM Studio, Lemonade) run on the owner's own machine and cost no
+allowance. They are off unless the owner turns them on: `LOCAL_WORKERS=on` in `<SKILL>/local.env`,
+or the owner's own words in this conversation ("use local models"), in which case pass
+`LOCAL_WORKERS=on` in the environment of each `dispatch.sh` call. The owner also names the model
+for each server (`OLLAMA_MODEL`, `LMSTUDIO_MODEL`, `LEMONADE_MODEL`); a server without one is not
+used, and you never pick one. Server addresses default to `OLLAMA_URL`, `LMSTUDIO_URL` and
+`LEMONADE_URL` in `roster.sh`. They go through `dispatch.sh`, so the permission rule above applies.
+- **Easy tasks only**, never medium or hard, and never a review or a repair of a review finding.
+  `dispatch.sh` refuses a brief without a `Tier: easy` line.
+- **First on the easy list** when on: the first of ollama, lmstudio, lemonade that preflight shows
+  `ok`. Anything but `PASS` (or a `PASS` whose claims do not hold up) goes straight to the next
+  entry, the Claude subagent on Sonnet 5.5; there is no follow-up dispatch and no second local
+  runner for the same task.
+- **One local worker per server at a time**: each server shares one machine's memory. A parallel
+  batch gives at most one task to each server and the rest to their usual runners.
 
 **Allowance.** `python3 -I <SKILL>/bin/usage.py` (`python` on Windows) prints one line per runner:
 the share left in each window and when it resets. It takes about 10 seconds (80 at the very most:
@@ -178,7 +195,8 @@ branch (`main` or `master`, whichever exists).
     on Opus 5.5 (outside: agy Carbon medium, then codex Sol, then Cursor Opus).
   - **easy**: mechanical and fully specified (copy edits from given text, renames, a constant, a
     test from a given table). Claude subagent on Sonnet 5.5 at high effort (outside, only when
-    Claude is out: Cursor grok, then agy Gemini 4 Hydrogen, then codex Sol).
+    Claude is out: Cursor grok, then agy Gemini 4 Hydrogen, then codex Sol). When the owner has
+    turned local models on, a local model is tried first (section 1, **Local models**).
 - **Parallel**: mark a task parallel when no other task in its group edits any of its files and
   none of them waits on another. Disjoint files are the rule, not a guess: name every file each
   task may touch. A shared file (a router, an index, a lockfile, a migration list) makes the tasks
@@ -192,19 +210,22 @@ branch (`main` or `master`, whichever exists).
 - **Claim the row first**: mark it `running <time> <runner>` in `status.md`, then dispatch. A row
   left at `todo` while a worker was editing is how the same task gets run twice.
 - **Brief**: write `<build>/briefs/<task>.md` = `<SKILL>/templates/worker-rules.md` with its
-  angle brackets filled in, plus the task section. Workers read the brief from disk.
+  angle brackets filled in, plus the task section, including its `Tier:` line. Workers read the
+  brief from disk.
 - **Claude worker**: Agent tool, prompt "Read `<brief>` and follow it exactly. Your final message
   is your report." Name the tier's model and effort from the roster on the call: Opus for hard and
   medium, `model: "sonnet"` and `effort: "high"` for easy, `model: "fable"` and `effort: "high"`
   for a hard task's step up. Let it run in the background and wait for its notification.
 - **Outside worker** (only when allowed):
-  `bash <SKILL>/bin/dispatch.sh <task> <claude|agy|cursor|codex> <model> <brief> <worktree> <build>`.
+  `bash <SKILL>/bin/dispatch.sh <task> <runner> <model> <brief> <worktree> <build>`, runner one of
+  `claude`, `agy`, `cursor`, `codex`, or a local `ollama`, `lmstudio`, `lemonade`.
   It prints one line: `PASS`, `VERIFYFAIL`, `NOVERDICT`, `FAIL`, `EMPTY`, `RATELIMITED` (exit
   86) or `TIMEOUT` (exit 87). Read `<build>/reports/<task>.md`, not the log; on a failure read only
   `tail -c 2000` of the log, never `tail -n`. It refuses to start (exit 2) a model that is not
   that runner's worker model in `roster.sh` (`NOTINROSTER`, listing the allowed ones: correct the
   call, never the roster) or a runner that is not installed (`NORUNNER`: mark it down and take the
-  next entry on the list).
+  next entry on the list). A local runner also refuses while local models are off (`LOCALOFF`) or
+  for a brief that is not `Tier: easy` (`NOTEASY`); either means the task goes to its usual list.
 - **Rate limited, or `LOW` in the latest `usage.py` run**: reroute the same task to the next entry
   on its tier's list at once; do not wait. Mark that allowance line down in `status.md` with the
   time (for agy, `agy-claude` or `agy-gemini`, whichever the model draws on), run
@@ -375,7 +396,8 @@ hard task's step up goes to `claude claude-fable-5-2`, or `cursor claude-fable-5
 `RATELIMITED`, and to section 6 if neither runs), medium to `claude claude-opus-5-5` first (on
 `RATELIMITED`: `agy gemini-4-carbon-medium`, then `codex gpt-6.1-sol`, then
 `cursor claude-opus-5-5-high`), easy to `claude claude-sonnet-5-5` (on `RATELIMITED`:
-`cursor cursor-grok-4.6-high-fast`, then `agy gemini-4-hydrogen-high`, then `codex gpt-6.1-sol`).
+`cursor cursor-grok-4.6-high-fast`, then `agy gemini-4-hydrogen-high`, then `codex gpt-6.1-sol`),
+with a local model first when the owner has turned them on (section 1, **Local models**).
 A `LOW` line from `usage.py` counts as `RATELIMITED` in every chain here, and so does a `RESERVE`
 line that carries a reviewer or this lead (`codex`, `cursor`, `agy-gemini`) while a milestone
 review is still to come. Reviews still run through

@@ -57,13 +57,51 @@ CODEX_WORKER_EFFORT="xhigh"                      # every codex worker; dispatch.
 CURSOR_EASY_MODEL="cursor-grok-4.6-high-fast"    # easy: 1st fallback
 AGY_EASY_MODEL="gemini-4-hydrogen-high"   # easy: 2nd fallback; Hydrogen replaced Flash (owner, 2026-11-12)
 
+# Local models: Ollama, LM Studio and Lemonade, each driven through Codex CLI against the server's
+# OpenAI-compatible Responses endpoint. Off unless the owner turns them on (LOCAL_WORKERS=on), and
+# only for easy tasks: dispatch.sh refuses a local runner for a brief whose tier is not easy. The
+# owner names each model; a runner with no model set is left out. Each setting comes from the
+# environment first, then from local.env next to SKILL.md (git ignores it), then the default.
+ROSTER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_local_env() {  # _local_env KEY -> its value in local.env (UTF-8, or the UTF-16 PowerShell writes)
+  local f="$ROSTER_DIR/../local.env"
+  [ -f "$f" ] || return 0
+  tr -d '\000\r' < "$f" | LC_ALL=C sed '1s/^[^A-Za-z#]*//' \
+    | grep -E "^[[:space:]]*$1[[:space:]]*=" | tail -1 \
+    | sed -E "s/^[^=]*=[[:space:]]*//; s/[[:space:]]+$//; s/^[\"']//; s/[\"']$//"
+}
+_setting() {  # _setting KEY DEFAULT
+  local v; eval "v=\${$1:-}"
+  [ -n "$v" ] || v="$(_local_env "$1")"
+  printf '%s' "${v:-$2}"
+}
+LOCAL_WORKERS="$(_setting LOCAL_WORKERS off)"
+OLLAMA_MODEL="$(_setting OLLAMA_MODEL "")"        # for example qwen3.5:4b
+LMSTUDIO_MODEL="$(_setting LMSTUDIO_MODEL "")"
+LEMONADE_MODEL="$(_setting LEMONADE_MODEL "")"
+OLLAMA_URL="$(_setting OLLAMA_URL http://localhost:11434/v1)"     # Ollama's default port
+LMSTUDIO_URL="$(_setting LMSTUDIO_URL http://localhost:1234/v1)"  # LM Studio's default port
+LEMONADE_URL="$(_setting LEMONADE_URL http://localhost:13305/api/v1)"  # Lemonade's default; check with: lemonade status
+LOCAL_RUNNERS="ollama lmstudio lemonade"          # the order a task tries them in
+local_on() { case "$(printf '%s' "$LOCAL_WORKERS" | tr '[:upper:]' '[:lower:]')" in on|yes|true|1) return 0 ;; esac; return 1; }
+local_url() {  # local_url <ollama|lmstudio|lemonade>
+  case "$1" in ollama) echo "$OLLAMA_URL" ;; lmstudio) echo "$LMSTUDIO_URL" ;; lemonade) echo "$LEMONADE_URL" ;; esac
+}
+local_up() {  # local_up <runner>: its server answers and lists the model the owner named
+  local m; m="$(worker_models "$1")"; [ -n "$m" ] || return 1
+  curl -s -m 5 "$(local_url "$1")/models" 2>/dev/null | grep -qF "\"$m\""
+}
+
 # The worker models each runner may be given. dispatch.sh refuses any other (NOTINROSTER), so the
 # roster is checked, not only written down. Built from the names above: change a model there.
-worker_models() {  # worker_models <claude|agy|cursor|codex>
+worker_models() {  # worker_models <claude|agy|cursor|codex|ollama|lmstudio|lemonade>
   case "$1" in
     claude) echo "$CLAUDE_WORKER_MODEL $CLAUDE_EASY_MODEL $CLAUDE_STEPUP_MODEL" ;;
     agy)    echo "$AGY_OPUS_MODEL $AGY_CARBON_MODEL $AGY_EASY_MODEL" ;;
     cursor) echo "$CURSOR_OPUS_MODEL $CURSOR_FABLE_MODEL $CURSOR_EASY_MODEL" ;;
     codex)  echo "$CODEX_HARD_MODEL $CODEX_WORKER_MODEL" ;;
+    ollama)   echo "$OLLAMA_MODEL" ;;
+    lmstudio) echo "$LMSTUDIO_MODEL" ;;
+    lemonade) echo "$LEMONADE_MODEL" ;;
   esac
 }
