@@ -121,18 +121,31 @@ fi
 if ! local_on; then
   echo "local  : off (the owner turns local workers on with LOCAL_WORKERS=on; easy tasks only)"
 else
+  # The harness drives every local server (LOCAL_HARNESS: codex or qwen).
+  if ! local_harness_ok; then harness=""; hnote="LOCAL_HARNESS is '$LOCAL_HARNESS'; it must be codex or qwen"
+  elif ! command -v "$LOCAL_HARNESS" >/dev/null 2>&1; then harness=""; hnote="$LOCAL_HARNESS (LOCAL_HARNESS) is not on PATH"
+  else harness="$LOCAL_HARNESS $(run_deadline 30 "$LOCAL_HARNESS" --version 2>/dev/null | tail -1 | sed 's/^codex-cli //')"; fi
   for r in $LOCAL_RUNNERS; do
     m="$(worker_models "$r")"; u="$(local_url "$r")"
     if [ -z "$m" ]; then
       echo "$(printf '%-7s' "$r"): not used, no model named ($(printf '%s' "$r" | tr '[:lower:]' '[:upper:]')_MODEL)"
-    elif ! command -v codex >/dev/null 2>&1; then
-      echo "$(printf '%-7s' "$r"): DOWN, codex (which drives the local models) is not on PATH"
+    elif [ -z "$harness" ]; then
+      echo "$(printf '%-7s' "$r"): DOWN, $hnote"
     elif ! curl -s -m 5 "$u/models" >"$T/$r.json" 2>/dev/null; then
       echo "$(printf '%-7s' "$r"): DOWN, no server answers at $u (start it, or set $(printf '%s' "$r" | tr '[:lower:]' '[:upper:]')_URL)"
     elif ! grep -qF "\"$m\"" "$T/$r.json"; then
       echo "$(printf '%-7s' "$r"): MODEL NOT LISTED: $m is not served at $u (load or pull it; never substitute)"
     else
-      echo "$(printf '%-7s' "$r"): ok, $m at $u; easy tasks only"
+      ctx=""
+      if [ "$r" = ollama ]; then  # Ollama reports the context of a loaded model; a harness's first request is 3-15k tokens
+        ctx="$(curl -s -m 5 "${u%/v1}/api/ps" 2>/dev/null | tr ',' '\n' | awk -v n="\"name\":\"$m\"" '
+          index($0, "\"name\":\"") { f = index($0, n) > 0 }
+          f && /"context_length":/ { gsub(/[^0-9]/, ""); print; exit }')"
+        if [ -z "$ctx" ]; then ctx="; context not known until the model is loaded"
+        elif [ "$ctx" -lt 32768 ]; then ctx="; CONTEXT SMALL: $ctx tokens (a worker needs 32768 or more; set OLLAMA_CONTEXT_LENGTH)"
+        else ctx="; context $ctx tokens"; fi
+      fi
+      echo "$(printf '%-7s' "$r"): ok, $m at $u$ctx; driven by $harness; easy tasks only"
     fi
   done
 fi
