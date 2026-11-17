@@ -2,13 +2,15 @@
 # Hand one build task to one outside worker and print ONE line, so the lead's context never
 # holds a worker transcript. Claude subagents do not go through here: the lead starts them with
 # its own Agent tool. This is for cursor-agent, agy, codex, and `claude -p` when the lead is
-# not Claude Code.
+# not Claude Code. It also runs the local models (Ollama, LM Studio, Lemonade) through Codex CLI,
+# when the owner has turned them on, and only for an easy task.
 #
 #   dispatch.sh <task> <runner> <model> <brief> <worktree> <build-dir>
-#     runner: claude | agy | cursor | codex
+#     runner: claude | agy | cursor | codex | ollama | lmstudio | lemonade
 #
 #   dispatch.sh E3 cursor cursor-grok-4.6-high-fast  <build>/briefs/E3.md  <worktree>  <build>
 #   dispatch.sh D1 agy    claude-opus-5-5-high       <build>/briefs/D1.md  <worktree>  <build>
+#   dispatch.sh E4 ollama qwen3.5:4b                 <build>/briefs/E4.md  <worktree>  <build>
 #
 # The worker writes two files, and they are all the lead reads:
 #   <build>/reports/<task>.md      its final report (STATUS, COMMITS, FILES CHANGED, ...)
@@ -23,7 +25,10 @@
 #   87  TIMEOUT     hung and killed at the deadline (DISPATCH_TIMEOUT, default 3600 s)
 #   2   usage, missing file, the task is already running (lock), a model that is not one of this
 #       runner's worker models in roster.sh (NOTINROSTER), or a runner that is not installed
-#       (NORUNNER). Nothing was started: correct the call, or take the next entry on the list.
+#       (NORUNNER; for a local runner, also a server that does not answer or does not list the
+#       model). A local runner also refuses while local workers are off (LOCALOFF) and for a
+#       brief whose "Tier:" line is not easy (NOTEASY). Nothing was started: correct the call, or
+#       take the next entry on the list.
 #
 # These runners edit files unattended. Claude Code's auto mode refuses to start one ("Create
 # Unsafe Agents") unless the owner has allowed this script with a permission rule. A refusal is
@@ -45,20 +50,33 @@ if [ "$#" -ne 6 ]; then
 fi
 TASK="$1"; RUNNER="$2"; MODEL="$3"; BRIEF="$4"; WT="$5"; BUILD="$6"
 
-case "$RUNNER" in claude|agy|cursor|codex) ;; *)
-  echo "$TASK - unknown runner '$RUNNER' (want claude, agy, cursor or codex)" >&2; exit 2 ;;
+case "$RUNNER" in claude|agy|cursor|codex|ollama|lmstudio|lemonade) ;; *)
+  echo "$TASK - unknown runner '$RUNNER' (want claude, agy, cursor, codex, ollama, lmstudio or lemonade)" >&2; exit 2 ;;
 esac
+LOCAL=""; case "$RUNNER" in ollama|lmstudio|lemonade) LOCAL=yes ;; esac
+if [ -n "$LOCAL" ] && ! local_on; then
+  echo "$TASK $RUNNER LOCALOFF local workers are off; only the owner turns them on (LOCAL_WORKERS=on)" >&2; exit 2
+fi
 ALLOWED="$(worker_models "$RUNNER")"
+if [ -n "$LOCAL" ] && [ -z "$ALLOWED" ]; then
+  echo "$TASK $RUNNER NOTINROSTER no $RUNNER model is set; the owner names one ($(printf '%s' "$RUNNER" | tr '[:lower:]' '[:upper:]')_MODEL in local.env)" >&2; exit 2
+fi
 case " $ALLOWED " in *" $MODEL "*) ;; *)
   echo "$TASK $RUNNER NOTINROSTER '$MODEL' is not on the roster as a worker model for $RUNNER (roster.sh); allowed: $ALLOWED" >&2
   exit 2 ;;
 esac
+[ -f "$BRIEF" ] || { echo "$TASK $RUNNER NOBRIEF $BRIEF does not exist" >&2; exit 2; }
+if [ -n "$LOCAL" ] && ! grep -qiE '^Tier:[[:space:]]*easy([[:space:]]|$)' "$BRIEF"; then
+  echo "$TASK $RUNNER NOTEASY local models take only easy tasks, and the brief has no 'Tier: easy' line" >&2; exit 2
+fi
 case "$RUNNER" in
   claude|codex) command -v "$RUNNER" >/dev/null 2>&1 || { echo "$TASK $RUNNER NORUNNER $RUNNER is not on PATH" >&2; exit 2; } ;;
   cursor) [ -e "$CURSOR" ] || { echo "$TASK $RUNNER NORUNNER cursor-agent not found at $CURSOR (set CURSOR_AGENT)" >&2; exit 2; } ;;
   agy)    [ -e "$AGY" ]    || { echo "$TASK $RUNNER NORUNNER agy not found at $AGY (set AGY)" >&2; exit 2; } ;;
+  *)
+    command -v codex >/dev/null 2>&1 || { echo "$TASK $RUNNER NORUNNER codex, which drives the local models, is not on PATH" >&2; exit 2; }
+    local_up "$RUNNER" || { echo "$TASK $RUNNER NORUNNER $(local_url "$RUNNER") does not answer, or does not list $MODEL" >&2; exit 2; } ;;
 esac
-[ -f "$BRIEF" ] || { echo "$TASK $RUNNER NOBRIEF $BRIEF does not exist" >&2; exit 2; }
 git -C "$WT" rev-parse --git-dir >/dev/null 2>&1 || { echo "$TASK $RUNNER NOWORKTREE $WT is not a git checkout" >&2; exit 2; }
 
 mkdir -p "$BUILD/logs" "$BUILD/reports"
@@ -121,6 +139,16 @@ case "$RUNNER" in
     # left to the owner's ~/.codex/config.toml (Codex's own default for gpt-6.1-sol is low).
     printf '%s' "$PROMPT" | run_with_deadline codex exec - -m "$MODEL" -s danger-full-access \
       -c "model_reasoning_effort=\"$CODEX_WORKER_EFFORT\"" -C "$WT_W" -o "$(runner_path "$BUILD/logs/$TASK-$STAMP.last.md")" >"$LOG" 2>&1; rc=$? ;;
+  ollama|lmstudio|lemonade)
+    # Codex against the local server's Responses endpoint, with a Codex home of its own: the
+    # owner's ~/.codex (skills, MCP servers, global instructions) made a 137,599-token request
+    # that no small model's context holds (tested 2026-11-17). The repo's AGENTS.md still applies.
+    # Plugins are off: a fresh Codex home otherwise clones the plugin catalog on every run.
+    LHOME="$BUILD/logs/$TASK-$STAMP.codex-home"; mkdir -p "$LHOME"
+    printf '%s' "$PROMPT" | CODEX_HOME="$(runner_path "$LHOME")" run_with_deadline codex exec - -m "$MODEL" \
+      -c "model_providers.localrt.name=\"$RUNNER\"" -c "model_providers.localrt.base_url=\"$(local_url "$RUNNER")\"" \
+      -c 'model_providers.localrt.wire_api="responses"' -c 'model_provider="localrt"' \
+      --disable plugins --disable remote_plugin -s danger-full-access -C "$WT_W" -o "$(runner_path "$BUILD/logs/$TASK-$STAMP.last.md")" >"$LOG" 2>&1; rc=$? ;;
 esac
 elapsed=$(( $(date +%s) - start ))
 dur=$(printf '%02d:%02d:%02d' $((elapsed/3600)) $((elapsed%3600/60)) $((elapsed%60)))
@@ -144,7 +172,9 @@ if [ ! -f "$VERDICT" ]; then
   echo "$TASK $WHO NOVERDICT exited 0 but wrote no verdict $dur log=$LOG"; exit 1
 fi
 
-v="$(tr -d '[:space:]' < "$VERDICT" | tr '[:lower:]' '[:upper:]')"
+# A worker that writes the verdict from Windows PowerShell leaves a byte-order mark (UTF-8) or a
+# UTF-16 file (seen 2026-11-17): drop the NUL bytes and anything before the first letter.
+v="$(tr -d '\000[:space:]' < "$VERDICT" | LC_ALL=C sed 's/^[^A-Za-z]*//' | tr '[:lower:]' '[:upper:]')"
 if [ "$v" = "PASS" ]; then
   # PASS counts only with a clean exit and a written report.
   if [ "$rc" -ne 0 ]; then

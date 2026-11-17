@@ -29,7 +29,9 @@ no extra features, no refactors, no other tasks, no outside reviewers, no agents
 - A worktree may have no virtual environment or `node_modules` of its own: use the commands below.
 <TOOL_NOTES>
 - On Windows the default shell may be Windows PowerShell 5.1, which rejects `&&`: one command per
-  line, or use Bash.
+  line, or use Bash. Its `>`, `Out-File` and `Set-Content` write UTF-16 or add a byte-order mark:
+  write every file, your report and verdict included, as UTF-8 without one (your edit tool, Bash,
+  or `[IO.File]::WriteAllText`).
 - Long output goes to `<BUILD>/logs/<TASK>-<what>.log`; refer to it by path.
 
 ## Data safety
@@ -69,6 +71,8 @@ final message is the report.
 ---
 
 # Your task: <TASK> — <ONE-LINE SUMMARY>
+
+Tier: <easy | medium | hard>
 
 <TASK SECTION: what to build, the files it owns, the plan sections that bind it, the decisions
 already made, what not to touch, and the exact verification commands that must pass>

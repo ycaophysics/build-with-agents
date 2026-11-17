@@ -116,3 +116,23 @@ if [ -e "$AGY" ]; then
 else
   echo "agy    : NOT FOUND at $AGY"
 fi
+
+# Local models (Ollama, LM Studio, Lemonade): easy tasks only, and only when the owner turns them on.
+if ! local_on; then
+  echo "local  : off (the owner turns local workers on with LOCAL_WORKERS=on; easy tasks only)"
+else
+  for r in $LOCAL_RUNNERS; do
+    m="$(worker_models "$r")"; u="$(local_url "$r")"
+    if [ -z "$m" ]; then
+      echo "$(printf '%-7s' "$r"): not used, no model named ($(printf '%s' "$r" | tr '[:lower:]' '[:upper:]')_MODEL)"
+    elif ! command -v codex >/dev/null 2>&1; then
+      echo "$(printf '%-7s' "$r"): DOWN, codex (which drives the local models) is not on PATH"
+    elif ! curl -s -m 5 "$u/models" >"$T/$r.json" 2>/dev/null; then
+      echo "$(printf '%-7s' "$r"): DOWN, no server answers at $u (start it, or set $(printf '%s' "$r" | tr '[:lower:]' '[:upper:]')_URL)"
+    elif ! grep -qF "\"$m\"" "$T/$r.json"; then
+      echo "$(printf '%-7s' "$r"): MODEL NOT LISTED: $m is not served at $u (load or pull it; never substitute)"
+    else
+      echo "$(printf '%-7s' "$r"): ok, $m at $u; easy tasks only"
+    fi
+  done
+fi

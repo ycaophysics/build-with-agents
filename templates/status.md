@@ -20,6 +20,7 @@ Started: <YYYY-MM-DD HH:MM> by <LEAD AND MODEL>.
 | cursor (review) | grok-4.7-xhigh | | | <cursor line> |
 | agy Carbon (review) | gemini-4-carbon-high | | | <agy-gemini line> |
 | agy Opus (worker, when Claude is out) | claude-opus-5-5-high | | | <agy-claude line> |
+| Local (easy only; <on / off>) | <ollama / lmstudio / lemonade and the model the owner named> | | | none: runs on the owner's machine |
 
 ## Owner answers during the build
 
