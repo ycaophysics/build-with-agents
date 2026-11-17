@@ -158,7 +158,7 @@ branch (`main` or `master`, whichever exists).
 - Use the plan's own milestones and task list when it has them. Otherwise make two to four
   milestones; each ends in something the owner can see or run, visible work first.
 - Each task: one bounded job, the files it owns, the plan sections that bind it, its exact
-  verification commands, and a tier:
+  verification commands, what it waits on (the tasks whose code it needs), and a tier:
   - **hard**: money, orders, broker or account paths, state machines, concurrency, migrations,
     anything where a mistake loses money or data. Claude subagent on Opus 5.5 (outside: agy Opus,
     then Cursor Opus, then agy Carbon medium, then codex Astra). Its step up, when it stays
@@ -168,6 +168,11 @@ branch (`main` or `master`, whichever exists).
   - **easy**: mechanical and fully specified (copy edits from given text, renames, a constant, a
     test from a given table). Claude subagent on Sonnet 5.5 at high effort (outside, only when
     Claude is out: Cursor grok, then agy Gemini 4 Hydrogen, then codex Sol).
+- **Parallel**: mark a task parallel when no other task in its group edits any of its files and
+  none of them waits on another. Disjoint files are the rule, not a guess: name every file each
+  task may touch. A shared file (a router, an index, a lockfile, a migration list) makes the tasks
+  that touch it run one after the other; pull the shared edit into its own small task when that
+  frees the rest.
 - Write the milestones and tasks into `status.md` before the first dispatch. Smallest build that
   meets the plan: no extra features, refactors or extra review rounds.
 
@@ -192,14 +197,26 @@ branch (`main` or `master`, whichever exists).
   `usage.py` to see when its window resets, and look at it again then (after 30 minutes if that is
   `unknown`).
 - **One code-changing worker at a time** in the build worktree: workers share its files and its
-  git index. Run workers in parallel only for tasks that touch disjoint files, at most three at
-  once, each in its own worktree that you make from the build branch head
-  (`git -C <worktree> worktree add <path> -b <task-branch> HEAD`); bring each back with
-  `git -C <worktree> cherry-pick <head>..<task-branch>` and remove its worktree. If the
-  cherry-pick stops on a conflict, run `git -C <worktree> cherry-pick --abort` so the build
-  worktree is not left in the middle of one, record that task as not merged in `status.md`, and
-  carry on with the build. (The Agent tool's own worktree option starts from the main checkout's
-  HEAD, not the build branch.)
+  git index. Run workers in parallel only for tasks marked parallel in section 3, **at most eight
+  at once**, each in its own worktree that you make from the build branch head
+  (`git -C <worktree> worktree add <repos folder>/<repo-short>-wt-<slug>-<task> -b <task-branch> HEAD`;
+  record that `HEAD` as the task's start), with its tools set up as in setup step 5. Its brief
+  names that worktree and branch, not the build worktree's, and its row in `status.md` names the
+  worktree too, so a resume can find it. (The Agent tool's own worktree option starts from the
+  main checkout's HEAD, not the build branch.)
+  - **How many**: one per ready parallel task, up to eight; fewer when fewer are ready. Never split
+    a task just to fill seats. After a `RATELIMITED` line or a `LOW` run, start no new worker on
+    that allowance line until it is `ok` again. If the Agent tool refuses a start because too many
+    subagents are running, leave the row `todo` and start it when a worker finishes.
+  - **Bring each back** one at a time, in the order they finish. First
+    `git -C <task worktree> diff --name-only <start>..<task-branch>`: a task that changed a file it
+    does not own is not merged until you have checked that no other running task owns that file.
+    Then `git -C <worktree> cherry-pick <start>..<task-branch>` and remove its worktree. If the
+    cherry-pick stops on a conflict, run `git -C <worktree> cherry-pick --abort` so the build
+    worktree is not left in the middle of one, record that task as not merged in `status.md`, and
+    carry on; it may be dispatched once more from the new head.
+  - **After a batch is back**, run the repo's checks once in the build worktree before starting any
+    task that depends on the batch: tasks with disjoint files can still break each other.
 - **Check every claim yourself** after each worker: `git -C <worktree> log` and `show --stat` for
   its commits, rerun the tests it says passed, and confirm the main checkout is still clean and
   `<base>` has not moved. A worker exiting cleanly proves nothing.
@@ -289,6 +306,8 @@ Nothing here pauses the build (rule 4). Each goes into `status.md` and the final
 First, in this order (the owner's rule for every worktree):
 - Write the follow-up list into the repo's `TODOS.md` (or its deferred-work file) and commit it as
   the build's last commit on the build branch.
+- Remove any parallel task worktree still left (after checking it for unmerged work, which goes in
+  the report).
 - Look in the build worktree for uncommitted files, then remove the worktree, and confirm with
   `git worktree list` that it is gone and that its folder is gone from disk (`git worktree remove`
   can leave `node_modules` behind).
@@ -314,7 +333,8 @@ Then the report:
 ## Resume
 
 Read `status.md`. Trust it over memory. For a row left `running`: check `git -C <worktree> log`,
-`git status` and `<build>/reports/<task>.md`. If the work landed, verify it and mark it done. If
+`git status` and `<build>/reports/<task>.md`, in the task's own worktree when its row names one
+(`git worktree list` shows any that are left). If the work landed, verify it and mark it done. If
 not, first check that no worker is still running for the task (a python, node, codex,
 cursor-agent, agy or claude process whose command line names the task or the worktree); if one
 is, wait for it and do not dispatch. Only then delete `<build>/logs/<task>.lock` if present and

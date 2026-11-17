@@ -32,7 +32,8 @@ Started: <YYYY-MM-DD HH:MM> by <LEAD AND MODEL>.
 
 ## Items
 
-States: todo, running <time> <runner>, done, partial, not done (why).
+States: todo, running <time> <runner> [<task worktree> from <start sha>, for a parallel task],
+done, partial, not merged (conflict), not done (why).
 
 | Item | Tier | Worker | State | Commits | Tests |
 |---|---|---|---|---|---|
