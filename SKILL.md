@@ -109,8 +109,9 @@ every outside call has a deadline), only reads, writes nothing, and never stops 
 | `agy-gemini` | agy Carbon (worker and reviewer) and agy Gemini 4 Hydrogen |
 | `agy-claude` | agy Opus |
 
-A line is `LOW` when any window has 10% or less left, `unknown` when it could not be read (a tool
-is missing or logged out), and `ok` otherwise; the output ends with `LOW:` and `UNKNOWN:` lists.
+A line is `LOW` when any window has 10% or less left, `RESERVE` when one has 25% or less and none is
+`LOW`, `unknown` when it could not be read (a tool is missing or logged out), and `ok` otherwise;
+the output ends with `LOW:`, `RESERVE:` and `UNKNOWN:` lists.
 It reads `quota-cli` for every runner, agy included (`install.sh` installs it). Hermes (`hermes
 usage`) is optional: when it is installed, it fills in agy's lines if quota-cli cannot read them.
 On macOS the `cursor` line is `unknown`, because cursor-agent keeps its login in the Keychain
@@ -124,9 +125,15 @@ there. The settings and their overrides are described at the top of `usage.py` a
   entry on the task's list, and bring the line back when a later run shows it `ok`. If `claude` is
   `LOW`, give every task to the tier's outside runners when outside workers are allowed (otherwise
   carry on with Claude), and tell the owner in one line what is left and when it resets.
-- **Reviewers** always run, as before. Write a `LOW` reviewer's line next to its review in
-  `status.md`, so a failure there explains itself.
-- **`unknown` changes nothing.** Only `LOW` moves work.
+- **`RESERVE` keeps the rest for the reviewers and the lead**, who draw on the same lines as some
+  fallbacks (`codex`, `cursor` and `agy-gemini` each carry a reviewer; `claude` carries the lead).
+  While a milestone review is still to come, an outside worker on a `RESERVE` line is skipped as
+  if it were `LOW`. On `claude` at `RESERVE`, Claude workers run one at a time, never in parallel;
+  when outside workers are allowed, the other ready tasks go to their tier's outside runners.
+  `agy-claude` carries no other seat, so `RESERVE` there changes nothing.
+- **Reviewers** always run, as before. Write a `LOW` or `RESERVE` reviewer's line next to its
+  review in `status.md`, so a failure there explains itself.
+- **`unknown` changes nothing.** Only `LOW` and `RESERVE` move work.
 
 ## 2. Setup (you, in order; record each in `status.md`)
 
@@ -144,12 +151,16 @@ branch (`main` or `master`, whichever exists).
    `git worktree add ../<repo-short>-wt-<slug> -b <branch> <base>`. Record the base commit.
 4. **Build folder**: `~/.claude/plans/<slug>-build/` with `logs/`, `reviews/`,
    `briefs/`, `reports/`. Copy the plan in as `plan.md` so reviewers read the same text you do.
-5. **Tools in the worktree** (see **Repo notes**): which interpreter, `npm ci`, links.
+5. **Tools in the worktree** (see **Repo notes**): which interpreter, `npm ci`, links. When the
+   repo's tests run with pytest, make sure pytest-xdist is installed in the interpreter the
+   worktree uses (`<python> -m pip install pytest-xdist` when it is missing; the owner's rule is
+   that a suite never runs serially) and record that you installed it.
 6. **Runners**: `bash <SKILL>/bin/preflight.sh --live`. One line per runner. A logged-out or
    missing runner does not stop the build: mark it down in `status.md`, tell the owner it needs
    his login, and route around it. Then run `usage.py` (see **Allowance**).
 7. **Status file** from `<SKILL>/templates/status.md`; copy into it what you noted in steps 2 to 6.
-8. **Baseline**: run the repo's checks once on the untouched worktree. If something already fails,
+8. **Baseline**: run the repo's checks once on the untouched worktree, pytest with `-n auto`. The
+   commands that ran here are the ones every brief names. If something already fails,
    record it in `status.md` as failing before the build, tell the owner in one line, and carry on;
    it is not yours to fix and does not count against the build.
 
@@ -185,7 +196,10 @@ branch (`main` or `master`, whichever exists).
   `bash <SKILL>/bin/dispatch.sh <task> <claude|agy|cursor|codex> <model> <brief> <worktree> <build>`.
   It prints one line: `PASS`, `VERIFYFAIL`, `NOVERDICT`, `FAIL`, `EMPTY`, `RATELIMITED` (exit
   86) or `TIMEOUT` (exit 87). Read `<build>/reports/<task>.md`, not the log; on a failure read only
-  `tail -c 2000` of the log, never `tail -n`.
+  `tail -c 2000` of the log, never `tail -n`. It refuses to start (exit 2) a model that is not
+  that runner's worker model in `roster.sh` (`NOTINROSTER`, listing the allowed ones: correct the
+  call, never the roster) or a runner that is not installed (`NORUNNER`: mark it down and take the
+  next entry on the list).
 - **Rate limited, or `LOW` in the latest `usage.py` run**: reroute the same task to the next entry
   on its tier's list at once; do not wait. Mark that allowance line down in `status.md` with the
   time (for agy, `agy-claude` or `agy-gemini`, whichever the model draws on), run
@@ -275,9 +289,10 @@ Nothing here pauses the build (rule 4). Each goes into `status.md` and the final
   ends with a `Co-Authored-By:` line naming the model that actually did that work.
 - Never push, merge, rebase onto `<base>`, open a PR or deploy unless the owner says so.
 - Tests run with the command the repo's `CLAUDE.md` and `AGENTS.md` name; that command wins. When
-  it is pytest and pytest-xdist is installed, add `-n auto`. If `-n` is rejected, record it in
-  `status.md` and run the repo's command without `-n`; that alone does not fail the build. The
-  worker template says the same.
+  it is pytest, add `-n auto` (setup step 5 installed pytest-xdist). A suite never runs serially:
+  if `-n auto` still fails at the baseline (for example the repo's config turns xdist off), that
+  is a lead's choice (section 6), told to the owner, and the baseline's command is then the
+  build's. Workers run the commands their brief names and never drop `-n` on their own.
 - Owner-facing words are plain English: what a person sees and can do. No "gate", no invented
   shorthand, no internal codes on screen.
 - Docs are edited in place; obsolete text is deleted, not corrected below.
@@ -341,7 +356,9 @@ hard task's step up goes to `claude claude-fable-5-2`, or `cursor claude-fable-5
 `RATELIMITED`: `agy gemini-4-carbon-medium`, then `codex gpt-6.1-sol`, then
 `cursor claude-opus-5-5-high`), easy to `claude claude-sonnet-5-5` (on `RATELIMITED`:
 `cursor cursor-grok-4.6-high-fast`, then `agy gemini-4-hydrogen-high`, then `codex gpt-6.1-sol`).
-A `LOW` line from `usage.py` counts as `RATELIMITED` in every chain here. Reviews still run through
+A `LOW` line from `usage.py` counts as `RATELIMITED` in every chain here, and so does a `RESERVE`
+line that carries a reviewer or this lead (`codex`, `cursor`, `agy-gemini`) while a milestone
+review is still to come. Reviews still run through
 `review.sh`. Codex is a one-shot process: a question printed to the screen
 reaches nobody, so it follows rule 4 and section 6 the same way (a lead's choice in `status.md`)
 and stops only at the final report.
