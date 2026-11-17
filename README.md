@@ -125,6 +125,7 @@ With your permission, Cursor, agy and Codex take tasks when Claude is rate limit
 | `FAIL`, `NOVERDICT`, `EMPTY` | The runner crashed, finished without a verdict, or printed nothing |
 | `RATELIMITED` (exit 86) | Rate limited, out of credit, or logged out. The lead moves the task to the next runner at once |
 | `TIMEOUT` (exit 87) | Still running at the deadline (one hour by default) and stopped |
+| `NOTINROSTER`, `NORUNNER` (exit 2) | Nothing was started: the model is not one of that runner's worker models in [bin/roster.sh](bin/roster.sh) (the line lists the allowed ones), or the runner is not installed |
 
 A `PASS` verdict with an error exit or a missing report counts as `FAIL`. A lock keeps the same task from being dispatched twice. The full transcript goes to a log file; the lead reads the short report the worker writes.
 
@@ -140,9 +141,9 @@ A `PASS` verdict with an error exit or a missing report counts as `FAIL`. A lock
 | `agy-gemini` | quota-cli (Gemini pool) | agy Gemini 4 Carbon and Gemini 4 Hydrogen |
 | `agy-claude` | quota-cli (Claude/GPT pool) | agy Opus |
 
-quota-cli reads each tool's saved login without changing it. It reads agy's own login from version 0.4.0. If quota-cli cannot read agy and Hermes is installed, Hermes (`hermes usage`) fills in the two agy lines, so you don't need Hermes. On macOS the `cursor` line shows `unknown`: cursor-agent keeps its login in the Keychain there, and quota-cli 0.4.0 reads it only from `~/.config/cursor/auth.json`. A line is `LOW` when any window has 10% or less left, `unknown` when its numbers could not be read, and `ok` otherwise. The check only reads, usually takes about 10 seconds (80 at most), and never stops a build. Anything in the tools' output that looks like an email address, a login token or a home folder is hidden.
+quota-cli reads each tool's saved login without changing it. It reads agy's own login from version 0.4.0. If quota-cli cannot read agy and Hermes is installed, Hermes (`hermes usage`) fills in the two agy lines, so you don't need Hermes. On macOS the `cursor` line shows `unknown`: cursor-agent keeps its login in the Keychain there, and quota-cli 0.4.0 reads it only from `~/.config/cursor/auth.json`. A line is `LOW` when any window has 10% or less left, `RESERVE` when one has 25% or less and none is `LOW`, `unknown` when its numbers could not be read, and `ok` otherwise. The check only reads, usually takes about 10 seconds (80 at most), and never stops a build. Anything in the tools' output that looks like an email address, a login token or a home folder is hidden.
 
-The lead runs the check at setup, before each milestone review, after any `RATELIMITED` result, and at the end. A `LOW` worker is treated as rate limited before it is tried, so its task goes to the next runner for that size, and it comes back once a later check shows it `ok`. If `claude` itself is `LOW`, tasks go to outside workers when you have allowed them, and the lead tells you what is left and when it resets. Reviewers run even when `LOW`. An `unknown` line changes nothing. The first and last checks go in the final report, so you can see what the build used.
+The lead runs the check at setup, before each milestone review, after any `RATELIMITED` result, and at the end. A `LOW` worker is treated as rate limited before it is tried, so its task goes to the next runner for that size, and it comes back once a later check shows it `ok`. If `claude` itself is `LOW`, tasks go to outside workers when you have allowed them, and the lead tells you what is left and when it resets. Reviewers run even when `LOW`. `RESERVE` keeps what is left for the seats that must not run dry: while a milestone review is still to come, an outside worker on a `RESERVE` line that also carries a reviewer (`codex`, `cursor`, `agy-gemini`) is skipped like a `LOW` one, and when `claude` is at `RESERVE` its workers run one at a time so the lead has enough to finish. An `unknown` line changes nothing. The first and last checks go in the final report, so you can see what the build used.
 
 ### Rate limits partway through a task
 
@@ -208,6 +209,7 @@ The allowance check reads these from the environment, or from `local.env` next t
 | Setting | Default | What it does |
 |---|---|---|
 | `USAGE_LOW_PCT` | 10 | A runner is `LOW` at or below this percent left in any window |
+| `USAGE_RESERVE_PCT` | 25 | A runner is `RESERVE` at or below this percent left in any window, when none is `LOW`. Set it at or below `USAGE_LOW_PCT` to turn `RESERVE` off |
 | `QUOTA_CLI` | `quota-cli` on PATH, then `~/.cargo/bin`, then `~/.local/bin` | Path to quota-cli |
 | `QUOTA_WATCH` | none | A Python file defining `run_quota_cli(None)`, tried before quota-cli. Useful when quota-cli misreads Cursor on Windows |
 | `HERMES` | `hermes` on PATH, then `%LOCALAPPDATA%\hermes\bin` on Windows or `~/.local/bin` elsewhere | Path to Hermes, which is optional |

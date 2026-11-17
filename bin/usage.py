@@ -10,7 +10,9 @@ agy, Hermes is asked instead if it is installed (`hermes usage --provider
 antigravity-subscription-directsdk --json`); Hermes is optional. Every source is optional: a source
 that is missing, slow or failing makes its runners "unknown", never "low".
 
-A runner is LOW when any of its windows has USAGE_LOW_PCT percent or less left.
+A runner is LOW when any of its windows has USAGE_LOW_PCT percent or less left, and RESERVE when one
+has USAGE_RESERVE_PCT or less but no window is LOW. RESERVE keeps what is left for the seats that must
+not run dry: the reviewers and the lead (SKILL.md, Allowance, says what moves).
 
 It always exits 0 and never prints a traceback. Every outside call has a deadline, so the whole check
 ends in about 80 seconds at the very most (usually 10): the quota side tries the optional QUOTA_WATCH
@@ -20,7 +22,9 @@ Anything a tool says that looks like an email address, a login token or a home f
 
 Settings come from the environment, or from local.env next to SKILL.md (git ignores that file; save it
 as UTF-8 or as PowerShell's UTF-16). A leading ~ or %VAR% in a path is expanded.
-    USAGE_LOW_PCT  0 to 100, default 10
+    USAGE_LOW_PCT      0 to 100, default 10
+    USAGE_RESERVE_PCT  0 to 100, default 25: about one milestone's reviews on top of LOW. Set it at or
+                       below USAGE_LOW_PCT to turn RESERVE off.
     QUOTA_CLI      path to quota-cli                       (default: PATH, ~/.cargo/bin, ~/.local/bin)
     QUOTA_WATCH    optional path to a Python file that defines run_quota_cli(None) -> {stdout,
                    stderr, returncode}: a drop-in for quota-cli that works around its Windows
@@ -43,7 +47,7 @@ from datetime import datetime
 from pathlib import Path
 
 SKILL = Path(__file__).resolve().parent.parent
-SETTINGS = ("USAGE_LOW_PCT", "QUOTA_CLI", "QUOTA_WATCH", "HERMES")
+SETTINGS = ("USAGE_LOW_PCT", "USAGE_RESERVE_PCT", "QUOTA_CLI", "QUOTA_WATCH", "HERMES")
 PATH_SETTINGS = ("QUOTA_CLI", "QUOTA_WATCH", "HERMES")
 QUOTA_RUNNERS = ("claude", "codex", "cursor")
 AGY_RUNNERS = ("agy-gemini", "agy-claude")
@@ -100,12 +104,21 @@ def load_settings() -> dict:
     return cfg
 
 
-def low_threshold(cfg: dict) -> float:
+def threshold(cfg: dict, key: str, default: float) -> float:
     try:
-        value = float(cfg.get("USAGE_LOW_PCT", "10"))
+        value = float(cfg.get(key, default))
     except (TypeError, ValueError):
-        return 10.0
-    return value if math.isfinite(value) and 0 <= value <= 100 else 10.0
+        return default
+    return value if math.isfinite(value) and 0 <= value <= 100 else default
+
+
+def low_threshold(cfg: dict) -> float:
+    return threshold(cfg, "USAGE_LOW_PCT", 10.0)
+
+
+def reserve_threshold(cfg: dict, low_pct: float) -> float:
+    """Never below LOW: a reserve level at or under it means no RESERVE band at all."""
+    return max(threshold(cfg, "USAGE_RESERVE_PCT", 25.0), low_pct)
 
 
 # ----------------------------------------------------------------------------- numbers
@@ -334,21 +347,25 @@ def fmt_reset(ts) -> str:
         return ""
 
 
-def describe(info: dict, low_pct: float):
-    """-> (state, detail). state is ok, LOW or unknown. LOW means 'low_pct or less left', unrounded."""
+def describe(info: dict, low_pct: float, reserve_pct: float | None = None):
+    """-> (state, detail). state is ok, RESERVE, LOW or unknown. LOW means 'low_pct or less left' in a
+    window, RESERVE 'reserve_pct or less' in one and LOW in none; both unrounded."""
+    reserve_pct = low_pct if reserve_pct is None else max(reserve_pct, low_pct)
     wins = info.get("windows") or []
     if not wins or all(w["left"] is None for w in wins):
         return "unknown", scrub(info.get("problem") or "no data")
-    low, parts = False, []
+    low, reserve, parts = False, False, []
     for w in sorted(wins, key=lambda w: {"5-hour": 0, "week": 1}.get(w["name"], 2)):  # short window first
         if w["left"] is None:
             parts.append(f"{w['name']} ? left")
             continue
         is_low = w["left"] <= low_pct
-        low = low or is_low
+        is_reserve = not is_low and w["left"] <= reserve_pct
+        low, reserve = low or is_low, reserve or is_reserve
+        mark = " LOW" if is_low else " RESERVE" if is_reserve else ""
         when = fmt_reset(w["reset"]) if w["reset"] else ""
-        parts.append(f"{w['name']} {fmt_pct(w['left'])} left{' LOW' if is_low else ''}{f' (resets {when})' if when else ''}")
-    return ("LOW" if low else "ok"), scrub("; ".join(parts))
+        parts.append(f"{w['name']} {fmt_pct(w['left'])} left{mark}{f' (resets {when})' if when else ''}")
+    return ("LOW" if low else "RESERVE" if reserve else "ok"), scrub("; ".join(parts))
 
 
 def safe(fn, cfg: dict, runners) -> dict:
@@ -364,23 +381,26 @@ def main() -> int:
     try:
         cfg = load_settings()
         low_pct = low_threshold(cfg)
+        reserve_pct = reserve_threshold(cfg, low_pct)
         with ThreadPoolExecutor(max_workers=2) as pool:
             quota = pool.submit(safe, collect_quota, cfg, RUNNERS)
             hermes = pool.submit(safe, collect_hermes, cfg, AGY_RUNNERS)
             results = merge(quota.result(), hermes.result())
     except Exception as exc:  # advisory only: whatever went wrong, say so and carry on
-        low_pct = 10.0
+        low_pct, reserve_pct = 10.0, 25.0
         results = unknown(f"usage check failed: {type(exc).__name__}", RUNNERS)
-    print(f"usage checked {datetime.now().strftime('%a %b %d %H:%M')}; LOW = {low_pct:g}% or less left in any window")
-    low, unsure = [], []
+    band = f"; RESERVE = {reserve_pct:g}% or less" if reserve_pct > low_pct else ""
+    print(f"usage checked {datetime.now().strftime('%a %b %d %H:%M')}; LOW = {low_pct:g}% or less left in any window{band}")
+    low, reserved, unsure = [], [], []
     for runner in RUNNERS:
         try:
-            state, detail = describe(results.get(runner) or {}, low_pct)
+            state, detail = describe(results.get(runner) or {}, low_pct, reserve_pct)
         except Exception:
             state, detail = "unknown", "its numbers could not be read"
         print(f"{runner:<11} {state:<8} {detail}")
-        (low if state == "LOW" else unsure if state == "unknown" else []).append(runner)
+        {"LOW": low, "RESERVE": reserved, "unknown": unsure}.get(state, []).append(runner)
     print("LOW: " + (", ".join(low) or "none"))
+    print("RESERVE: " + (", ".join(reserved) or "none"))
     print("UNKNOWN: " + (", ".join(unsure) or "none"))
     return 0
 

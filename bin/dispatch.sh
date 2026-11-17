@@ -21,7 +21,9 @@
 #                   clean exit or without a report
 #   86  RATELIMITED rate limited, out of credit, or logged out: reroute, do not wait
 #   87  TIMEOUT     hung and killed at the deadline (DISPATCH_TIMEOUT, default 3600 s)
-#   2   usage, missing file, or the task is already running (lock)
+#   2   usage, missing file, the task is already running (lock), a model that is not one of this
+#       runner's worker models in roster.sh (NOTINROSTER), or a runner that is not installed
+#       (NORUNNER). Nothing was started: correct the call, or take the next entry on the list.
 #
 # These runners edit files unattended. Claude Code's auto mode refuses to start one ("Create
 # Unsafe Agents") unless the owner has allowed this script with a permission rule. A refusal is
@@ -45,6 +47,16 @@ TASK="$1"; RUNNER="$2"; MODEL="$3"; BRIEF="$4"; WT="$5"; BUILD="$6"
 
 case "$RUNNER" in claude|agy|cursor|codex) ;; *)
   echo "$TASK - unknown runner '$RUNNER' (want claude, agy, cursor or codex)" >&2; exit 2 ;;
+esac
+ALLOWED="$(worker_models "$RUNNER")"
+case " $ALLOWED " in *" $MODEL "*) ;; *)
+  echo "$TASK $RUNNER NOTINROSTER '$MODEL' is not on the roster as a worker model for $RUNNER (roster.sh); allowed: $ALLOWED" >&2
+  exit 2 ;;
+esac
+case "$RUNNER" in
+  claude|codex) command -v "$RUNNER" >/dev/null 2>&1 || { echo "$TASK $RUNNER NORUNNER $RUNNER is not on PATH" >&2; exit 2; } ;;
+  cursor) [ -e "$CURSOR" ] || { echo "$TASK $RUNNER NORUNNER cursor-agent not found at $CURSOR (set CURSOR_AGENT)" >&2; exit 2; } ;;
+  agy)    [ -e "$AGY" ]    || { echo "$TASK $RUNNER NORUNNER agy not found at $AGY (set AGY)" >&2; exit 2; } ;;
 esac
 [ -f "$BRIEF" ] || { echo "$TASK $RUNNER NOBRIEF $BRIEF does not exist" >&2; exit 2; }
 git -C "$WT" rev-parse --git-dir >/dev/null 2>&1 || { echo "$TASK $RUNNER NOWORKTREE $WT is not a git checkout" >&2; exit 2; }

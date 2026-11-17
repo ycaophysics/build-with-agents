@@ -2,18 +2,28 @@
 # Change a model here AND in the roster table in ../SKILL.md, in the same edit. Never add a model
 # the owner has not named, and never fall back to "auto".
 
-# Where the runners live. On Windows cursor-agent and agy are not on Git Bash's PATH; they are
-# under %LOCALAPPDATA%. On macOS and Linux they are on PATH, or in ~/.local/bin where their
-# installers put them. CURSOR_AGENT and AGY override both.
+# Where the runners live. On Windows cursor-agent and agy are usually not on Git Bash's PATH;
+# their installers put them under %LOCALAPPDATA%. On macOS and Linux they are on PATH, or in
+# ~/.local/bin. CURSOR_AGENT and AGY override every place below. Otherwise the first place that
+# exists wins; when none does, the first one is kept, so preflight's "NOT FOUND at <path>" names
+# where the installer would have put it.
+_first_found() {  # _first_found <candidate>...  (an empty candidate is skipped)
+  local c
+  for c in "$@"; do [ -n "$c" ] && [ -e "$c" ] && { printf '%s' "$c"; return; }; done
+  for c in "$@"; do [ -n "$c" ] && { printf '%s' "$c"; return; }; done
+}
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
     LOCAL_APPS="$(cygpath -u "${LOCALAPPDATA:-}" 2>/dev/null)"
     LOCAL_APPS="${LOCAL_APPS:-$HOME/AppData/Local}"
-    CURSOR="${CURSOR_AGENT:-$LOCAL_APPS/cursor-agent/cursor-agent.cmd}"
-    AGY="${AGY:-$LOCAL_APPS/agy/bin/agy.exe}" ;;
+    CURSOR="${CURSOR_AGENT:-$(_first_found "$LOCAL_APPS/cursor-agent/cursor-agent.cmd" \
+      "$(command -v cursor-agent.cmd 2>/dev/null)" "$(command -v cursor-agent 2>/dev/null)")}"
+    AGY="${AGY:-$(_first_found "$LOCAL_APPS/agy/bin/agy.exe" "$(command -v agy 2>/dev/null)")}" ;;
   *)
-    CURSOR="${CURSOR_AGENT:-$(command -v cursor-agent 2>/dev/null || echo "$HOME/.local/bin/cursor-agent")}"
-    AGY="${AGY:-$(command -v agy 2>/dev/null || echo "$HOME/.local/bin/agy")}" ;;
+    CURSOR="${CURSOR_AGENT:-$(_first_found "$(command -v cursor-agent 2>/dev/null)" \
+      "$HOME/.local/bin/cursor-agent" /opt/homebrew/bin/cursor-agent /usr/local/bin/cursor-agent)}"
+    AGY="${AGY:-$(_first_found "$(command -v agy 2>/dev/null)" "$HOME/.local/bin/agy" \
+      /opt/homebrew/bin/agy /usr/local/bin/agy)}" ;;
 esac
 
 # Reviewers, run at the same time on every milestone.
@@ -46,3 +56,14 @@ CODEX_WORKER_MODEL="gpt-6.1-sol"                 # medium: 2nd fallback; easy: 3
 CODEX_WORKER_EFFORT="xhigh"                      # every codex worker; dispatch.sh passes it
 CURSOR_EASY_MODEL="cursor-grok-4.6-high-fast"    # easy: 1st fallback
 AGY_EASY_MODEL="gemini-4-hydrogen-high"   # easy: 2nd fallback; Hydrogen replaced Flash (owner, 2026-11-12)
+
+# The worker models each runner may be given. dispatch.sh refuses any other (NOTINROSTER), so the
+# roster is checked, not only written down. Built from the names above: change a model there.
+worker_models() {  # worker_models <claude|agy|cursor|codex>
+  case "$1" in
+    claude) echo "$CLAUDE_WORKER_MODEL $CLAUDE_EASY_MODEL $CLAUDE_STEPUP_MODEL" ;;
+    agy)    echo "$AGY_OPUS_MODEL $AGY_CARBON_MODEL $AGY_EASY_MODEL" ;;
+    cursor) echo "$CURSOR_OPUS_MODEL $CURSOR_FABLE_MODEL $CURSOR_EASY_MODEL" ;;
+    codex)  echo "$CODEX_HARD_MODEL $CODEX_WORKER_MODEL" ;;
+  esac
+}

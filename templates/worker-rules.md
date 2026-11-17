@@ -21,10 +21,11 @@ no extra features, no refactors, no other tasks, no outside reviewers, no agents
 ## Tools and tests
 - Read the repo's `CLAUDE.md` and `AGENTS.md`: they are binding, and the test command they name
   is the one you run.
-- When that command is pytest and pytest-xdist is installed, add `-n auto` (for example
-  `<PYTHON> -m pytest <paths> -n auto -q`, from the worktree root). A single small test file may
-  run without it. If `-n` is rejected, write that in your report and run the repo's command
-  without `-n`; that alone is not a failure.
+- Run the test commands your task section names, as written: the lead checked them at the start
+  of the build. For pytest they include `-n auto` (for example
+  `<PYTHON> -m pytest <paths> -n auto -q`, from the worktree root); a single small test file may
+  run without it. Never drop `-n` from a suite run on your own: if it is rejected, report BLOCKED
+  with the error.
 - A worktree may have no virtual environment or `node_modules` of its own: use the commands below.
 <TOOL_NOTES>
 - On Windows the default shell may be Windows PowerShell 5.1, which rejects `&&`: one command per
