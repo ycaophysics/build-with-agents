@@ -24,7 +24,7 @@ Every rule the lead follows is in [SKILL.md](SKILL.md).
 - Claude Code.
 - Python 3, for the allowance check (`python3`, or `python` on Windows).
 - quota-cli for the allowance check. The installer installs it (see below).
-- Optional: the Codex CLI, cursor-agent and agy as reviewers and outside workers; Node.js for the agy review guard; Hermes as a second source for agy's allowance. A missing tool is reported, and the build goes on without it.
+- Optional: the Codex CLI, cursor-agent and agy as reviewers and outside workers; Node.js for the agy review guard; Hermes as a second source for agy's allowance; a local model server (Ollama, LM Studio or Lemonade) with the Codex CLI or Qwen Code to drive it, for easy tasks. A missing tool is reported, and the build goes on without it.
 
 ## Install
 
@@ -104,7 +104,7 @@ Build files go in `~/.claude/plans/<slug>-build/`: a copy of the plan, `status.m
 |---|---|---|---|
 | Hard | Money, orders, accounts, state machines, concurrency, migrations: anything where a mistake loses money or data | Claude subagent, Opus 5.5 at high effort | agy Opus 5.5, then Cursor Opus 5.5, then agy Gemini 4 Carbon (medium), then Codex `gpt-6-astra` at `xhigh` |
 | Medium | Plumbing with real edge cases, tests that need thought, screens | Claude subagent, Opus 5.5 at high effort | agy Gemini 4 Carbon (medium), then Codex `gpt-6.1-sol` at `xhigh`, then Cursor Opus 5.5 |
-| Easy | Mechanical, fully specified changes such as renames, copy edits from given text, or a test from a given table | Claude subagent, Sonnet 5.5 at high effort | Cursor `cursor-grok-4.6-high-fast`, then agy Gemini 4 Hydrogen, then Codex `gpt-6.1-sol` at `xhigh` |
+| Easy | Mechanical, fully specified changes such as renames, copy edits from given text, or a test from a given table | Claude subagent, Sonnet 5.5 at high effort, after a local model when you turn those on | Cursor `cursor-grok-4.6-high-fast`, then agy Gemini 4 Hydrogen, then Codex `gpt-6.1-sol` at `xhigh` |
 
 If the repo has `.claude/agents/opus-high.md`, hard and medium tasks use that agent. Codex is on every list: GPT-6 Astra as the last fallback for hard tasks, GPT-6.1 Sol for medium and easy ones. A task that comes back partial or blocked gets one follow-up attempt, then moves up one size once; it never gets a third try at the same size. A hard task has no bigger size, so it moves up to Claude Fable 5.2 instead (Cursor's Fable 5.2 when Claude is out).
 
@@ -125,9 +125,24 @@ With your permission, Cursor, agy and Codex take tasks when Claude is rate limit
 | `FAIL`, `NOVERDICT`, `EMPTY` | The runner crashed, finished without a verdict, or printed nothing |
 | `RATELIMITED` (exit 86) | Rate limited, out of credit, or logged out. The lead moves the task to the next runner at once |
 | `TIMEOUT` (exit 87) | Still running at the deadline (one hour by default) and stopped |
-| `NOTINROSTER`, `NORUNNER` (exit 2) | Nothing was started: the model is not one of that runner's worker models in [bin/roster.sh](bin/roster.sh) (the line lists the allowed ones), or the runner is not installed |
+| `NOTINROSTER`, `NORUNNER` (exit 2) | Nothing was started: the model is not one of that runner's worker models in [bin/roster.sh](bin/roster.sh) (the line lists the allowed ones), or the runner is not installed. For a local model, also: no model named, the server does not answer or does not list the model, or the harness is missing |
+| `LOCALOFF`, `NOTEASY`, `LOCALBUSY` (exit 2) | Nothing was started: local models are off, the brief is not `Tier: easy`, or that server is already running a task of this build |
 
 A `PASS` verdict with an error exit or a missing report counts as `FAIL`. A lock keeps the same task from being dispatched twice. The full transcript goes to a log file; the lead reads the short report the worker writes.
+
+### Local models
+
+A model on your own machine can take easy tasks, at no cost in allowance. This is off until you turn it on with `LOCAL_WORKERS=on` in `local.env`, or by telling the lead to use local models. You also name the model for each server (`OLLAMA_MODEL`, `LMSTUDIO_MODEL`, `LEMONADE_MODEL`); a server with no model named is not used, and the lead never picks one.
+
+- Only easy tasks. `dispatch.sh` refuses a brief without a `Tier: easy` line.
+- The local model is tried first. Anything but `PASS` sends the task straight to the Claude Sonnet worker, with no second local attempt.
+- One task per server at a time, since a server shares one machine's memory.
+
+A harness drives the model: the Codex CLI (`LOCAL_HARNESS=codex`, the default), through the server's Responses endpoint, or Qwen Code (`LOCAL_HARNESS=qwen`), through its Chat Completions endpoint. Either one runs with a settings folder of its own, made fresh for each task, never your `~/.codex` or `~/.qwen`. Your own settings would bring along skills, MCP servers and memories: Codex with a full `~/.codex` once sent a 137,599-token request, more than a small model's context holds. The repo's `AGENTS.md` still applies. The server's context must hold the harness's first request (3,000 to 15,000 tokens) plus the work; `preflight.sh` shows Ollama's context and flags anything under 32,768.
+
+A local model does not know its own name, and its harness tells it that it is Codex or Qwen, so `dispatch.sh` gives it the exact `Co-Authored-By:` line for its commits.
+
+Tested on Windows on 2026-11-17, with `qwen3.8:27b` on Ollama (context 262,144 tokens). Three easy tasks each passed with both harnesses, and the commits and file bytes were right: a file with given text, a constant that passes a given check, and a test written from a given table. Qwen Code took 1:12 to 2:21 a task; Codex took 1:41 to 3:13. Codex runs its shell commands through Windows PowerShell 5.1, which broke the quoting of a `python -c` check and cost it a few retries; Qwen Code had no failed tool calls. Qwen Code sends more tokens: its first request is about 13,000 tokens and is sent again with every turn. LM Studio and Lemonade are untested (see [TODOS.md](TODOS.md)).
 
 ### Allowance check
 
@@ -189,7 +204,7 @@ The report covers what now works (with screenshots for screen changes), every ch
 
 ### Runner checks and deadlines
 
-[bin/preflight.sh](bin/preflight.sh) prints one line per runner: whether it is installed and logged in, its version, and whether every model in the roster is available to it. With `--live` it also asks each reviewer model for one word, which takes one to three minutes. A runner that is down is marked in `status.md` and routed around.
+[bin/preflight.sh](bin/preflight.sh) prints one line per runner: whether it is installed and logged in, its version, and whether every model in the roster is available to it. When local models are on, it adds one line per server: whether it answers and lists the named model, which harness drives it and its version, and (for Ollama) the context the model is loaded with. With `--live` it also asks each reviewer model for one word, which takes one to three minutes. A runner that is down is marked in `status.md` and routed around.
 
 Every outside call has a deadline. GNU `timeout` is not used: on Windows it often stops only the wrapper and leaves agy, Node or Codex running, and macOS does not have it. [bin/deadline.sh](bin/deadline.sh) stops the whole process tree instead. Under Git Bash it uses `taskkill`. On Linux and macOS it starts each call in a process group of its own and stops the group. Linux does this with `setsid`; macOS has no `setsid`, so it uses the Perl that ships with macOS.
 
@@ -214,6 +229,17 @@ The allowance check reads these from the environment, or from `local.env` next t
 | `QUOTA_WATCH` | none | A Python file defining `run_quota_cli(None)`, tried before quota-cli. Useful when quota-cli misreads Cursor on Windows |
 | `HERMES` | `hermes` on PATH, then `%LOCALAPPDATA%\hermes\bin` on Windows or `~/.local/bin` elsewhere | Path to Hermes, which is optional |
 
+Local models are set the same way, from the environment or `local.env`:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `LOCAL_WORKERS` | `off` | `on` lets local models take easy tasks |
+| `LOCAL_HARNESS` | `codex` | `codex` or `qwen`: the program that drives every local model |
+| `OLLAMA_MODEL`, `LMSTUDIO_MODEL`, `LEMONADE_MODEL` | none | The model each server runs, exactly as it lists it at `<url>/models`, for example `qwen3.8:27b`. A server with none is not used |
+| `OLLAMA_URL` | `http://localhost:11434/v1` | Ollama's OpenAI-compatible address |
+| `LMSTUDIO_URL` | `http://localhost:1234/v1` | LM Studio's |
+| `LEMONADE_URL` | `http://localhost:13305/api/v1` | Lemonade's |
+
 The other scripts read these environment variables:
 
 | Variable | Default | What it does |
@@ -236,7 +262,7 @@ If `repo-notes.local.md` exists next to SKILL.md, the lead reads the section for
 | `bin/review.sh` | Runs the milestone reviewers |
 | `bin/usage.py` | The allowance check |
 | `bin/preflight.sh` | Checks each runner before a build |
-| `bin/roster.sh` | Every model ID, and where cursor-agent and agy live |
+| `bin/roster.sh` | Every model ID, where cursor-agent and agy live, and the local-model settings |
 | `bin/deadline.sh` | Deadlines that stop a whole process tree |
 | `bin/agy-readonly-guard.mjs` | Keeps the agy reviewer read-only |
 | `templates/` | The status file, worker rules and review brief that the lead fills in |
