@@ -94,7 +94,7 @@ The lead has to last the whole build, so it reads each worker's final report and
 
 ### Work stays out of your checkout
 
-The build happens on a new branch in its own worktree next to your repo (`../<repo>-wt-<slug>`). Workers may not edit the main checkout, push, merge, open a pull request, or stage with `git add -A`. Only one worker edits the build worktree at a time. Tasks that touch separate files can run in parallel, up to three at once, each in its own worktree. The lead cherry-picks their commits back, and if a cherry-pick conflicts it aborts it and records that task as not merged.
+The build happens on a new branch in its own worktree next to your repo (`../<repo>-wt-<slug>`). Workers may not edit the main checkout, push, merge, open a pull request, or stage with `git add -A`. Only one worker edits the build worktree at a time. Tasks that touch separate files and do not wait on each other can run in parallel, up to eight at once, each in its own worktree. The lead checks that each one stayed inside its own files, cherry-picks their commits back one at a time, and if a cherry-pick conflicts it aborts it and records that task as not merged. Once a batch is back, it runs the repo's checks before any task that depends on it starts.
 
 Build files go in `~/.claude/plans/<slug>-build/`: a copy of the plan, `status.md`, and folders for briefs, worker reports, logs and reviews.
 
