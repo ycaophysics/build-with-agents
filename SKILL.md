@@ -71,7 +71,7 @@ the plan (and any notes). `<SKILL>` below means this skill's folder,
 | Worker, a hard task's step up when Claude Code is out | cursor-agent | `claude-fable-5-2-high` | `dispatch.sh` (allowed) |
 | Worker, easy when Claude Code is out | cursor-agent | `cursor-grok-4.6-high-fast` | `dispatch.sh` (allowed) |
 | Worker, easy second fallback | agy | `gemini-4-hydrogen-high` | `dispatch.sh` (allowed) |
-| Worker, easy only, tried first when the owner turns local models on | ollama, lmstudio or lemonade (a local server, driven through codex) | the model the owner names: `OLLAMA_MODEL`, `LMSTUDIO_MODEL`, `LEMONADE_MODEL` | `dispatch.sh` (allowed) |
+| Worker, easy only, tried first when the owner turns local models on | ollama, lmstudio or lemonade (a local server, driven by codex or qwen: `LOCAL_HARNESS`) | the model the owner names: `OLLAMA_MODEL`, `LMSTUDIO_MODEL`, `LEMONADE_MODEL` | `dispatch.sh` (allowed) |
 | Reviewer | codex | `gpt-6.1-sol`, reasoning `xhigh`, read-only. **Never astra.** | `review.sh` |
 | Reviewer | cursor-agent | `grok-4.7-xhigh`, plan mode (read-only) | `review.sh` |
 | Reviewer | agy | `gemini-4-carbon-high`, behind a read-only guard. **Never Argon** (Carbon is better: owner, 2026-11-10). | `review.sh` |
@@ -104,7 +104,9 @@ or the owner's own words in this conversation ("use local models"), in which cas
 `LOCAL_WORKERS=on` in the environment of each `dispatch.sh` call. The owner also names the model
 for each server (`OLLAMA_MODEL`, `LMSTUDIO_MODEL`, `LEMONADE_MODEL`); a server without one is not
 used, and you never pick one. Server addresses default to `OLLAMA_URL`, `LMSTUDIO_URL` and
-`LEMONADE_URL` in `roster.sh`. They go through `dispatch.sh`, so the permission rule above applies.
+`LEMONADE_URL` in `roster.sh`. `LOCAL_HARNESS` (`codex`, the default, or `qwen` for Qwen Code) is
+the program that drives every local model; that too is the owner's setting, never yours. They go
+through `dispatch.sh`, so the permission rule above applies.
 - **Easy tasks only**, never medium or hard, and never a review or a repair of a review finding.
   `dispatch.sh` refuses a brief without a `Tier: easy` line.
 - **First on the easy list** when on: the first of ollama, lmstudio, lemonade that preflight shows
@@ -112,7 +114,8 @@ used, and you never pick one. Server addresses default to `OLLAMA_URL`, `LMSTUDI
   entry, the Claude subagent on Sonnet 5.5; there is no follow-up dispatch and no second local
   runner for the same task.
 - **One local worker per server at a time**: each server shares one machine's memory. A parallel
-  batch gives at most one task to each server and the rest to their usual runners.
+  batch gives at most one task to each server and the rest to their usual runners; `dispatch.sh`
+  refuses a second one (`LOCALBUSY`).
 
 **Allowance.** `python3 -I <SKILL>/bin/usage.py` (`python` on Windows) prints one line per runner:
 the share left in each window and when it resets. It takes about 10 seconds (80 at the very most:
@@ -224,8 +227,9 @@ branch (`main` or `master`, whichever exists).
   `tail -c 2000` of the log, never `tail -n`. It refuses to start (exit 2) a model that is not
   that runner's worker model in `roster.sh` (`NOTINROSTER`, listing the allowed ones: correct the
   call, never the roster) or a runner that is not installed (`NORUNNER`: mark it down and take the
-  next entry on the list). A local runner also refuses while local models are off (`LOCALOFF`) or
-  for a brief that is not `Tier: easy` (`NOTEASY`); either means the task goes to its usual list.
+  next entry on the list). A local runner also refuses while local models are off (`LOCALOFF`),
+  for a brief that is not `Tier: easy` (`NOTEASY`), or while its server runs another task
+  (`LOCALBUSY`); each means the task goes to its usual list.
 - **Rate limited, or `LOW` in the latest `usage.py` run**: reroute the same task to the next entry
   on its tier's list at once; do not wait. Mark that allowance line down in `status.md` with the
   time (for agy, `agy-claude` or `agy-gemini`, whichever the model draws on), run

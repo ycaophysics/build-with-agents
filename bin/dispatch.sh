@@ -2,15 +2,16 @@
 # Hand one build task to one outside worker and print ONE line, so the lead's context never
 # holds a worker transcript. Claude subagents do not go through here: the lead starts them with
 # its own Agent tool. This is for cursor-agent, agy, codex, and `claude -p` when the lead is
-# not Claude Code. It also runs the local models (Ollama, LM Studio, Lemonade) through Codex CLI,
-# when the owner has turned them on, and only for an easy task.
+# not Claude Code. It also runs the local models (Ollama, LM Studio, Lemonade) through Codex CLI
+# or Qwen Code (LOCAL_HARNESS in roster.sh), when the owner has turned them on, and only for an
+# easy task.
 #
 #   dispatch.sh <task> <runner> <model> <brief> <worktree> <build-dir>
 #     runner: claude | agy | cursor | codex | ollama | lmstudio | lemonade
 #
 #   dispatch.sh E3 cursor cursor-grok-4.6-high-fast  <build>/briefs/E3.md  <worktree>  <build>
 #   dispatch.sh D1 agy    claude-opus-5-5-high       <build>/briefs/D1.md  <worktree>  <build>
-#   dispatch.sh E4 ollama qwen3.5:4b                 <build>/briefs/E4.md  <worktree>  <build>
+#   dispatch.sh E4 ollama qwen3.8:27b                <build>/briefs/E4.md  <worktree>  <build>
 #
 # The worker writes two files, and they are all the lead reads:
 #   <build>/reports/<task>.md      its final report (STATUS, COMMITS, FILES CHANGED, ...)
@@ -26,9 +27,10 @@
 #   2   usage, missing file, the task is already running (lock), a model that is not one of this
 #       runner's worker models in roster.sh (NOTINROSTER), or a runner that is not installed
 #       (NORUNNER; for a local runner, also a server that does not answer or does not list the
-#       model). A local runner also refuses while local workers are off (LOCALOFF) and for a
-#       brief whose "Tier:" line is not easy (NOTEASY). Nothing was started: correct the call, or
-#       take the next entry on the list.
+#       model, or a harness that is not installed or not codex or qwen). A local runner also
+#       refuses while local workers are off (LOCALOFF), for a brief whose "Tier:" line is not
+#       easy (NOTEASY), and while the same server is running another task of this build
+#       (LOCALBUSY). Nothing was started: correct the call, or take the next entry on the list.
 #
 # These runners edit files unattended. Claude Code's auto mode refuses to start one ("Create
 # Unsafe Agents") unless the owner has allowed this script with a permission rule. A refusal is
@@ -45,7 +47,7 @@ TIMEOUT="${DISPATCH_TIMEOUT:-3600}"
 CLAUDE_EFFORT="${DISPATCH_EFFORT:-high}"
 
 if [ "$#" -ne 6 ]; then
-  echo "usage: dispatch.sh <task> <claude|agy|cursor|codex> <model> <brief> <worktree> <build-dir>" >&2
+  echo "usage: dispatch.sh <task> <claude|agy|cursor|codex|ollama|lmstudio|lemonade> <model> <brief> <worktree> <build-dir>" >&2
   exit 2
 fi
 TASK="$1"; RUNNER="$2"; MODEL="$3"; BRIEF="$4"; WT="$5"; BUILD="$6"
@@ -74,7 +76,8 @@ case "$RUNNER" in
   cursor) [ -e "$CURSOR" ] || { echo "$TASK $RUNNER NORUNNER cursor-agent not found at $CURSOR (set CURSOR_AGENT)" >&2; exit 2; } ;;
   agy)    [ -e "$AGY" ]    || { echo "$TASK $RUNNER NORUNNER agy not found at $AGY (set AGY)" >&2; exit 2; } ;;
   *)
-    command -v codex >/dev/null 2>&1 || { echo "$TASK $RUNNER NORUNNER codex, which drives the local models, is not on PATH" >&2; exit 2; }
+    local_harness_ok || { echo "$TASK $RUNNER NORUNNER LOCAL_HARNESS is '$LOCAL_HARNESS'; it must be codex or qwen" >&2; exit 2; }
+    command -v "$LOCAL_HARNESS" >/dev/null 2>&1 || { echo "$TASK $RUNNER NORUNNER $LOCAL_HARNESS, which drives the local models (LOCAL_HARNESS), is not on PATH" >&2; exit 2; }
     local_up "$RUNNER" || { echo "$TASK $RUNNER NORUNNER $(local_url "$RUNNER") does not answer, or does not list $MODEL" >&2; exit 2; } ;;
 esac
 git -C "$WT" rev-parse --git-dir >/dev/null 2>&1 || { echo "$TASK $RUNNER NOWORKTREE $WT is not a git checkout" >&2; exit 2; }
@@ -88,6 +91,15 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   exit 2
 fi
 trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+# One local task per server: a second one would share the same model and memory.
+if [ -n "$LOCAL" ]; then
+  SLOCK="$BUILD/logs/local-$RUNNER.lock"
+  if ! mkdir "$SLOCK" 2>/dev/null; then
+    echo "$TASK $RUNNER LOCALBUSY $RUNNER is running another task of this build (remove $SLOCK if that is stale)" >&2
+    exit 2
+  fi
+  trap 'rmdir "$LOCK" "$SLOCK" 2>/dev/null' EXIT
+fi
 
 STAMP="$(date +%Y%m%d-%H%M%S)-$$"
 LOG="$BUILD/logs/$TASK-$STAMP.log"
@@ -113,6 +125,12 @@ Read ${BRIEF_W} and follow it exactly. Work only in ${WT_W}.
 When you finish, write two files; they are the only handoff the lead reads, and a chat answer is not one:
 1. ${REPORT_W}: your final report, under 60 lines, with exactly these sections: STATUS (DONE | PARTIAL | BLOCKED), COMMITS (hash + subject), FILES CHANGED, VERIFICATION (each command, exit code, pass/fail counts), OPEN ITEMS, ARTIFACT PATHS.
 2. ${VERDICT_W}: the single word PASS or FAIL. PASS only if the verification commands in your brief actually passed. A PASS with failing tests is worse than FAIL, because it is believed."
+# A local model does not know its own name, and its harness tells it it is Codex or Qwen: left
+# alone, its commits named gpt-6.1-sol, gpt-5.5-codex or "Qwen" (tested 2026-11-17).
+if [ -n "$LOCAL" ]; then
+  PROMPT="$PROMPT
+The model doing this task is ${MODEL}, running on this machine; your harness's name for you is not it. End every commit message with exactly this line: Co-Authored-By: ${MODEL} <noreply@localhost>"
+fi
 
 PROMPT_FILE="$BUILD/logs/$TASK.prompt.md"
 printf '%s\n' "$PROMPT" > "$PROMPT_FILE"
@@ -140,15 +158,30 @@ case "$RUNNER" in
     printf '%s' "$PROMPT" | run_with_deadline codex exec - -m "$MODEL" -s danger-full-access \
       -c "model_reasoning_effort=\"$CODEX_WORKER_EFFORT\"" -C "$WT_W" -o "$(runner_path "$BUILD/logs/$TASK-$STAMP.last.md")" >"$LOG" 2>&1; rc=$? ;;
   ollama|lmstudio|lemonade)
-    # Codex against the local server's Responses endpoint, with a Codex home of its own: the
-    # owner's ~/.codex (skills, MCP servers, global instructions) made a 137,599-token request
-    # that no small model's context holds (tested 2026-11-17). The repo's AGENTS.md still applies.
-    # Plugins are off: a fresh Codex home otherwise clones the plugin catalog on every run.
-    LHOME="$BUILD/logs/$TASK-$STAMP.codex-home"; mkdir -p "$LHOME"
-    printf '%s' "$PROMPT" | CODEX_HOME="$(runner_path "$LHOME")" run_with_deadline codex exec - -m "$MODEL" \
-      -c "model_providers.localrt.name=\"$RUNNER\"" -c "model_providers.localrt.base_url=\"$(local_url "$RUNNER")\"" \
-      -c 'model_providers.localrt.wire_api="responses"' -c 'model_provider="localrt"' \
-      --disable plugins --disable remote_plugin -s danger-full-access -C "$WT_W" -o "$(runner_path "$BUILD/logs/$TASK-$STAMP.last.md")" >"$LOG" 2>&1; rc=$? ;;
+    # Either harness runs with a home of its own, never the owner's: the owner's ~/.codex (skills,
+    # MCP servers, global instructions) made a 137,599-token request that no small model's
+    # context holds, and the owner's ~/.qwen adds a memory recall and a memory extractor to every
+    # run (tested 2026-11-17). The repo's AGENTS.md (and QWEN.md) still apply.
+    if [ "$LOCAL_HARNESS" = qwen ]; then
+      # Qwen Code against the server's Chat Completions endpoint. Its home holds only settings
+      # that keep it from reporting usage or writing memories. The key is a placeholder, so a
+      # real OPENAI_API_KEY in the environment is never sent to the local server. --add-dir lets
+      # its file tools write the report and verdict outside the worktree.
+      LHOME="$BUILD/logs/$TASK-$STAMP.qwen-home"; mkdir -p "$LHOME"
+      printf '%s\n' '{"privacy": {"usageStatisticsEnabled": false}, "telemetry": {"enabled": false, "logPrompts": false},' \
+        ' "memory": {"enableManagedAutoMemory": false, "enableManagedAutoDream": false, "enableAutoSkill": false}}' > "$LHOME/settings.json"
+      (cd "$WT" && printf '%s' "$PROMPT" | QWEN_HOME="$(runner_path "$LHOME")" QWEN_CODE_SUPPRESS_YOLO_WARNING=1 \
+        run_with_deadline qwen --auth-type openai --openai-base-url "$(local_url "$RUNNER")" --openai-api-key local \
+        -m "$MODEL" --yolo --add-dir "$BUILD_W" --chat-recording false -o text) >"$LOG" 2>&1; rc=$?
+    else
+      # Codex against the server's Responses endpoint. Plugins are off: a fresh Codex home
+      # otherwise clones the plugin catalog on every run.
+      LHOME="$BUILD/logs/$TASK-$STAMP.codex-home"; mkdir -p "$LHOME"
+      printf '%s' "$PROMPT" | CODEX_HOME="$(runner_path "$LHOME")" run_with_deadline codex exec - -m "$MODEL" \
+        -c "model_providers.localrt.name=\"$RUNNER\"" -c "model_providers.localrt.base_url=\"$(local_url "$RUNNER")\"" \
+        -c 'model_providers.localrt.wire_api="responses"' -c 'model_provider="localrt"' \
+        --disable plugins --disable remote_plugin -s danger-full-access -C "$WT_W" -o "$(runner_path "$BUILD/logs/$TASK-$STAMP.last.md")" >"$LOG" 2>&1; rc=$?
+    fi ;;
 esac
 elapsed=$(( $(date +%s) - start ))
 dur=$(printf '%02d:%02d:%02d' $((elapsed/3600)) $((elapsed%3600/60)) $((elapsed%60)))
