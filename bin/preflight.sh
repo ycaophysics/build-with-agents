@@ -121,8 +121,8 @@ fi
 if ! local_on; then
   echo "local  : off (the owner turns local workers on with LOCAL_WORKERS=on; easy tasks only)"
 else
-  # The harness drives every local server (LOCAL_HARNESS: codex or qwen).
-  if ! local_harness_ok; then harness=""; hnote="LOCAL_HARNESS is '$LOCAL_HARNESS'; it must be codex or qwen"
+  # The harness drives every local server (LOCAL_HARNESS: codex, qwen or opencode).
+  if ! local_harness_ok; then harness=""; hnote="LOCAL_HARNESS is '$LOCAL_HARNESS'; it must be codex, qwen or opencode"
   elif ! command -v "$LOCAL_HARNESS" >/dev/null 2>&1; then harness=""; hnote="$LOCAL_HARNESS (LOCAL_HARNESS) is not on PATH"
   else harness="$LOCAL_HARNESS $(run_deadline 30 "$LOCAL_HARNESS" --version 2>/dev/null | tail -1 | sed 's/^codex-cli //')"; fi
   for r in $LOCAL_RUNNERS; do

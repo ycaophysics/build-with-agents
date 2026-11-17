@@ -24,7 +24,7 @@ Every rule the lead follows is in [SKILL.md](SKILL.md).
 - Claude Code.
 - Python 3, for the allowance check (`python3`, or `python` on Windows).
 - quota-cli for the allowance check. The installer installs it (see below).
-- Optional: the Codex CLI, cursor-agent and agy as reviewers and outside workers; Node.js for the agy review guard; Hermes as a second source for agy's allowance; a local model server (Ollama, LM Studio or Lemonade) with the Codex CLI or Qwen Code to drive it, for easy tasks. A missing tool is reported, and the build goes on without it.
+- Optional: the Codex CLI, cursor-agent and agy as reviewers and outside workers; Node.js for the agy review guard; Hermes as a second source for agy's allowance; a local model server (Ollama, LM Studio or Lemonade) with the Codex CLI, Qwen Code or OpenCode to drive it, for easy tasks. A missing tool is reported, and the build goes on without it.
 
 ## Install
 
@@ -138,11 +138,11 @@ A model on your own machine can take easy tasks, at no cost in allowance. This i
 - The local model is tried first. Anything but `PASS` sends the task straight to the Claude Sonnet worker, with no second local attempt.
 - One task per server at a time, since a server shares one machine's memory.
 
-A harness drives the model: the Codex CLI (`LOCAL_HARNESS=codex`, the default), through the server's Responses endpoint, or Qwen Code (`LOCAL_HARNESS=qwen`), through its Chat Completions endpoint. Either one runs with a settings folder of its own, made fresh for each task, never your `~/.codex` or `~/.qwen`. Your own settings would bring along skills, MCP servers and memories: Codex with a full `~/.codex` once sent a 137,599-token request, more than a small model's context holds. The repo's `AGENTS.md` still applies. The server's context must hold the harness's first request (3,000 to 15,000 tokens) plus the work; `preflight.sh` shows Ollama's context and flags anything under 32,768.
+A harness drives the model: the Codex CLI (`LOCAL_HARNESS=codex`, the default), through the server's Responses endpoint, or Qwen Code (`LOCAL_HARNESS=qwen`) or OpenCode (`LOCAL_HARNESS=opencode`), through its Chat Completions endpoint. Each one runs with a settings folder of its own, made fresh for each task, never your `~/.codex`, `~/.qwen` or `~/.config/opencode`. Your own settings would bring along skills, MCP servers and memories: Codex with a full `~/.codex` once sent a 137,599-token request, more than a small model's context holds. The repo's `AGENTS.md` still applies. OpenCode does not load a repo `opencode.json`, so that file cannot send the task to another provider, and its web search and web fetch tools are off. The server's context must hold the harness's first request (3,000 to 15,000 tokens) plus the work; `preflight.sh` shows Ollama's context and flags anything under 32,768.
 
-A local model does not know its own name, and its harness tells it that it is Codex or Qwen, so `dispatch.sh` gives it the exact `Co-Authored-By:` line for its commits.
+A local model does not know its own name, and its harness tells it that it is Codex, Qwen or OpenCode, so `dispatch.sh` gives it the exact `Co-Authored-By:` line for its commits.
 
-Tested on Windows on 2026-11-17, with `qwen3.8:27b` on Ollama (context 262,144 tokens). Three easy tasks each passed with both harnesses, and the commits and file bytes were right: a file with given text, a constant that passes a given check, and a test written from a given table. Qwen Code took 1:12 to 2:21 a task; Codex took 1:41 to 3:13. Codex runs its shell commands through Windows PowerShell 5.1, which broke the quoting of a `python -c` check and cost it a few retries; Qwen Code had no failed tool calls. Qwen Code sends more tokens: its first request is about 13,000 tokens and is sent again with every turn. LM Studio and Lemonade are untested (see [TODOS.md](TODOS.md)).
+Tested on Windows on 2026-11-17, with `qwen3.8:27b` on Ollama (context 262,144 tokens). Three easy tasks each passed with Codex and with Qwen Code, and the commits and file bytes were right: a file with given text, a constant that passes a given check, and a test written from a given table. Qwen Code took 1:12 to 2:21 a task; Codex took 1:41 to 3:13. Codex runs its shell commands through Windows PowerShell 5.1, which broke the quoting of a `python -c` check and cost it a few retries; Qwen Code had no failed tool calls. Qwen Code sends more tokens: its first request is about 13,000 tokens and is sent again with every turn. OpenCode 1.19.6 resolves the named model from a fresh config and ignores a project `opencode.json`; it has not run those tasks. LM Studio and Lemonade are untested (see [TODOS.md](TODOS.md)).
 
 ### Allowance check
 
@@ -234,7 +234,7 @@ Local models are set the same way, from the environment or `local.env`:
 | Setting | Default | What it does |
 |---|---|---|
 | `LOCAL_WORKERS` | `off` | `on` lets local models take easy tasks |
-| `LOCAL_HARNESS` | `codex` | `codex` or `qwen`: the program that drives every local model |
+| `LOCAL_HARNESS` | `codex` | `codex`, `qwen` or `opencode`: the program that drives every local model |
 | `OLLAMA_MODEL`, `LMSTUDIO_MODEL`, `LEMONADE_MODEL` | none | The model each server runs, exactly as it lists it at `<url>/models`, for example `qwen3.8:27b`. A server with none is not used |
 | `OLLAMA_URL` | `http://localhost:11434/v1` | Ollama's OpenAI-compatible address |
 | `LMSTUDIO_URL` | `http://localhost:1234/v1` | LM Studio's |
